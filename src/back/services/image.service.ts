@@ -28,25 +28,8 @@ export class ImageProcessorService implements IImageProcessorService {
       passThrough.destroy(err);
     });
     
-    pipeline.on('info', (info) => {
-      console.log('[Sharp Pipeline Info]', photo.path, info);
-    });
-
     pipeline.pipe(passThrough);
     
-    passThrough.on('data', (chunk) => {
-      console.log('[PassThrough data]', chunk.length);
-    });
-    passThrough.on('end', () => {
-      console.log('[PassThrough end]');
-    });
-    passThrough.on('error', (err) => {
-      console.error('[PassThrough error]', err.message);
-    });
-    passThrough.on('close', () => {
-      console.log('[PassThrough close]');
-    });
-
     return passThrough;
   }
 }
