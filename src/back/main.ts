@@ -1,4 +1,4 @@
-// src/backend/main.ts
+// src/back/main.ts
 import Fastify from 'fastify';
 import { config } from './config/env.config.js'; // Важно: в Pure ESM расширение .js обязательно
 
