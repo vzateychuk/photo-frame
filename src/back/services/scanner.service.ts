@@ -2,10 +2,17 @@ import fs from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 import path from 'node:path';
 
+import { randomUUID } from 'crypto';
+
+export interface PhotoItem {
+  id: string;
+  path: string;
+}
+
 export class PhotoScannerService {
   constructor(private readonly rootDir: string) {}
 
-  async scan(): Promise<string[]> {
+  async scan(): Promise<PhotoItem[]> {
     let entries: Dirent<string>[];
     try {
       entries = await fs.readdir(this.rootDir, {
@@ -19,7 +26,13 @@ export class PhotoScannerService {
 
     return entries
       .filter((entry) => entry.isFile() && /\.(jpe?g|png)$/i.test(entry.name))
-      .map((entry) => path.join(entry.parentPath, entry.name));
+      .map((entry) => {
+        const fullPath = path.join(entry.parentPath, entry.name);
+        return {
+          id: randomUUID(),
+          path: fullPath,
+        };
+      });
   }
 }
 

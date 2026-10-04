@@ -32,12 +32,19 @@ describe('PhotoScannerService', () => {
     const photos = await service.scan();
 
     expect(photos).toHaveLength(4);
-    expect(photos).toContain(path.join(rootDir, 'photo1.jpg'));
-    expect(photos).toContain(path.join(rootDir, 'photo2.png'));
-    expect(photos).toContain(path.join(subdir, 'photo3.jpeg'));
-    expect(photos).toContain(path.join(subdir, 'photo4.PNG'));
-    expect(photos).not.toContain(path.join(rootDir, 'notes.txt'));
-    expect(photos).not.toContain(path.join(subdir, 'readme.md'));
+    const paths = photos.map(p => p.path);
+    expect(paths).toContain(path.join(rootDir, 'photo1.jpg'));
+    expect(paths).toContain(path.join(rootDir, 'photo2.png'));
+    expect(paths).toContain(path.join(subdir, 'photo3.jpeg'));
+    expect(paths).toContain(path.join(subdir, 'photo4.PNG'));
+    expect(paths).not.toContain(path.join(rootDir, 'notes.txt'));
+    expect(paths).not.toContain(path.join(subdir, 'readme.md'));
+    // Проверяем, что у каждого фото есть id
+    photos.forEach(p => {
+      expect(p.id).toBeDefined();
+      expect(typeof p.id).toBe('string');
+      expect(p.id.length).toBeGreaterThan(0);
+    });
   });
 
   it('should handle empty directory', async () => {
