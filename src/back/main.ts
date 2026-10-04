@@ -1,41 +1,71 @@
 // src/back/main.ts
+import path from 'node:path';
 import Fastify from 'fastify';
-import { config } from './config/env.config.js'; // Важно: в Pure ESM расширение .js обязательно
+import { config } from './config/env.config.js';
+import { PhotoScannerService } from './services/scanner.service.js';
+import { PlaylistService } from './services/playlist.service.js';
+import { ImageProcessorService } from './services/image.service.js';
+import { PhotoController } from './controllers/photo.controller.js';
 
 const bootstrap = async () => {
-  // Инициализация Fastify с настроенным Pino логгером
+  // Инициализация Fastify
   const server = Fastify({
     logger: {
       level: config.LOG_LEVEL,
-      ...(config.NODE_ENV === 'dev'
+      ...(config.NODE_ENV === 'development'
         ? {
-            transport: {
-              target: 'pino-pretty',
-              options: {
-                translateTime: 'HH:MM:ss Z',
-                ignore: 'pid,hostname',
-                colorize: true,
-              },
+          transport: {
+            target: 'pino-pretty',
+            options: {
+              translateTime: 'HH:MM:ss Z',
+              ignore: 'pid,hostname',
+              colorize: true,
             },
-          }
+          },
+        }
         : {}),
     },
   });
 
-  // Базовый health-check роут
+  // 1. Сканируем папку с фото при старте
+  const photosDir = path.resolve(config.PHOTOS_DIR);
+  const scanner = new PhotoScannerService(photosDir);
+  const photos = await scanner.scan();
+
+  if (photos.length === 0) {
+    server.log.warn(`В директории ${photosDir} не найдено фото (JPEG/PNG)`);
+  } else {
+    server.log.info(`Найдено фото: ${photos.length}`);
+  }
+
+  // 2. Инициализируем сервисы
+  const playlistService = new PlaylistService();
+  playlistService.loadPhotos(photos);
+
+  const imageProcessor = new ImageProcessorService();
+  const photoController = new PhotoController(playlistService, imageProcessor);
+
+  // 3. Регистрируем роуты
   server.get('/health', async () => {
     return { status: 'ok', timestamp: new Date().toISOString() };
   });
 
+  // API для плейлиста
+  server.get('/api/play/next', photoController.getNext);
+
+  // API для получения изображения
+  server.get('/api/photos/:id', photoController.getPhoto);
+
+  // 4. Запуск сервера
   try {
-    // Слушаем HOST:PORT
     await server.listen({
       port: config.PORT,
       host: config.HOST,
     });
-    
-    server.log.info(`Фоторамка запущена в режиме: ${config.NODE_ENV}`);
-    server.log.info(`Слушаем директорию с фото: ${config.PHOTOS_DIR}`);
+
+    server.log.info(`Сервер запущен в режиме: ${config.NODE_ENV}`);
+    server.log.info(`Слушаем директорию с фото: ${photosDir}`);
+    server.log.info(`API: http://${config.HOST}:${config.PORT}/api/play/next`);
   } catch (err) {
     server.log.fatal({ err }, 'Ошибка при запуске сервера');
     process.exit(1);

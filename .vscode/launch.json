@@ -2,9 +2,9 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Debug Vitest",
       "type": "node",
       "request": "launch",
-      "name": "Debug Vitest",
       "autoAttachChildProcesses": true,
       "program": "${workspaceFolder}/node_modules/vitest/vitest.mjs",
       "args": [
@@ -30,7 +30,7 @@
       ],
       "program": "${workspaceFolder}/src/back/main.ts",
       "env": {
-        "NODE_ENV": "dev",
+        "NODE_ENV": "development",
         "LOG_LEVEL": "debug"
       },
       "skipFiles": [

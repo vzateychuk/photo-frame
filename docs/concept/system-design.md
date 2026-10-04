@@ -32,7 +32,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const EnvSchema = z.object({
-  NODE_ENV: z.enum(['development', 'production', 'test']).default('production'),
+  NODE_ENV: z.enum(['dev', 'prod', 'test']).default('prod'),
   PORT: z.coerce.number().int().min(1024).max(65535).default(3000),
   HOST: z.string().default('0.0.0.0'),
   // Папка с фото обязательна для запуска сервиса
@@ -192,7 +192,7 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-# Этап 2: Production
+# Этап 2: prod
 FROM node:20-alpine AS runner
 WORKDIR /app
 COPY package*.json ./
@@ -200,7 +200,7 @@ RUN npm ci --omit=dev
 COPY --from=builder /app/dist ./dist
 
 USER node
-ENV NODE_ENV=production
+ENV NODE_ENV=prod
 EXPOSE 3000
 CMD ["node", "dist/main.js"]
 
@@ -221,7 +221,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NODE_ENV=production
+      - NODE_ENV=prod
       - PORT=3000
       - HOST=0.0.0.0
       - PHOTOS_DIR=/data/photos

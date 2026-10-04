@@ -1,9 +1,10 @@
    import sharp from 'sharp';
    import type { Readable } from 'node:stream';
-   import type { PhotoItem } from '../types';
-   import { IImageProcessorService } from '../types';
+   import type { PhotoItem } from '../types.js';
+   import type { IImageProcessorService } from '../types.js';
 
    export class ImageProcessorService implements IImageProcessorService {
+    
      public async process(
        photo: PhotoItem,
        dimensions: { width: number, height: number }

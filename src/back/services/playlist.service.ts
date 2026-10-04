@@ -37,7 +37,15 @@ export class PlaylistService {
     this.currentIndex++;
 
     // Возвращаем только публичные данные (без пути к файлу)
-    return { id: photo.id };
+    return { id: photo!.id };
+  }
+
+  /**
+   * Возвращает полную информацию о фото по ID (включая путь к файлу).
+   * Используется для получения файла для обработки.
+   */
+  getById(id: string): PhotoItem | null {
+    return this.photos.find(p => p.id === id) ?? null;
   }
 
   private shuffleAndReset(): void {
@@ -47,7 +55,9 @@ export class PlaylistService {
     // Алгоритм Фишера-Йейтса для честного перемешивания
     for (let i = this.playlist.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
-      [this.playlist[i], this.playlist[j]] = [this.playlist[j], this.playlist[i]];
+      const temp = this.playlist[i];
+      this.playlist[i] = this.playlist[j]!;
+      this.playlist[j] = temp!;
     }
     
     this.currentIndex = 0;

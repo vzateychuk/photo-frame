@@ -1,6 +1,6 @@
    import { describe, it, expect, beforeEach } from 'vitest';
-   import { ImageProcessorService } from '../../services/image.service';
-   import type { PhotoItem } from '../../types';
+   import { ImageProcessorService } from '../../services/image.service.js';
+   import type { PhotoItem } from '../../types.js';
    import { Readable } from 'node:stream';
    import path from 'node:path';
 

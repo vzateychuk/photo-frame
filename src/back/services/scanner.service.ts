@@ -27,7 +27,7 @@ export class PhotoScannerService {
     return entries
       .filter((entry) => entry.isFile() && /\.(jpe?g|png)$/i.test(entry.name))
       .map((entry) => {
-        const fullPath = path.join(entry.parentPath, entry.name);
+        const fullPath = path.resolve(entry.parentPath, entry.name);
         return {
           id: randomUUID(),
           path: fullPath,

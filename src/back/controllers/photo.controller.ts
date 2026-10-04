@@ -1,6 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { GetPhotoParamsSchema, GetPhotoQuerySchema } from '../schemas/photo.schema';
-import type { IPlayService, IImageProcessorService } from '../types';
+import { GetPhotoParamsSchema, GetPhotoQuerySchema } from '../schemas/photo.schema.js';
+import type { IPlayService, IImageProcessorService } from '../types.js';
 
 export class PhotoController {
   constructor(
@@ -37,6 +37,7 @@ export class PhotoController {
 
       // 2. Поиск фото в плейлисте
       const photoItem = this.playService.getById(id);
+      console.log('[Controller] Found photo:', photoItem); // <-- временно
 
       if (!photoItem) {
         reply.status(404).send({ error: 'Photo not found' });

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { PlaylistService } from '../../services/playlist.service';
+import { PlaylistService } from '../../services/playlist.service.js';
 
 describe('PlaylistService', () => {
   let service: PlaylistService;

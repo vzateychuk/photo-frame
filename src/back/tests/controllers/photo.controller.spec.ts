@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { PhotoController } from '../../controllers/photo.controller';
-import type { IPlayService, IImageProcessorService, PhotoItem, PublicPhoto } from '../../types';
+import { describe, it, expect, beforeEach } from 'vitest';
+import {vi} from 'vitest';
+import { PhotoController } from '../../controllers/photo.controller.js';
+import type { IPlayService, IImageProcessorService, PhotoItem, PublicPhoto } from '../../types.js';
 import { Readable } from 'node:stream';
 
 describe('PhotoController', () => {

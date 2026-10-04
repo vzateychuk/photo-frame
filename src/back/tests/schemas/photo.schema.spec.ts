@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { GetPhotoQuerySchema, GetPhotoParamsSchema } from '../../schemas/photo.schema';
+import { GetPhotoQuerySchema, GetPhotoParamsSchema } from '../../schemas/photo.schema.js';
 
 describe('Photo API Schemas', () => {
   describe('GetPhotoQuerySchema', () => {
