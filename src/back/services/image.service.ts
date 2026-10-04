@@ -1,27 +1,52 @@
-   import sharp from 'sharp';
-   import type { Readable } from 'node:stream';
-   import type { PhotoItem } from '../types.js';
-   import type { IImageProcessorService } from '../types.js';
+import sharp from 'sharp';
+import { PassThrough } from 'node:stream';
+import type { Readable } from 'node:stream';
+import type { PhotoItem } from '../types.js';
+import type { IImageProcessorService } from '../types.js';
 
-   export class ImageProcessorService implements IImageProcessorService {
+export class ImageProcessorService implements IImageProcessorService {
+
+  public async process(
+    photo: PhotoItem,
+    dimensions: { width: number, height: number }
+  ): Promise<Readable> {
+
+    const pipeline = sharp(photo.path)
+      .rotate()
+      .resize({
+        width: dimensions.width,
+        height: dimensions.height,
+        fit: 'inside',
+        withoutEnlargement: true,
+      })
+      .jpeg({ quality: 80, mozjpeg: true });
+
+    const passThrough = new PassThrough();
     
-     public async process(
-       photo: PhotoItem,
-       dimensions: { width: number, height: number }
-     ): Promise<Readable> {
-       // sharp() возвращает Duplex поток (Readable + Writable),
-       // который сразу начинает работу при чтении.
-       // Ошибки (файл не найден, битый формат) всплывут в событии 'error' этого потока.
-       const pipeline = sharp(photo.path)
-         .rotate()
-         .resize({
-           width: dimensions.width,
-           height: dimensions.height,
-           fit: 'inside',
-           withoutEnlargement: true,
-         })
-         .jpeg({ quality: 80, mozjpeg: true });
+    pipeline.on('error', (err) => {
+      console.error('[Sharp Pipeline Error]', photo.path, err.message);
+      passThrough.destroy(err);
+    });
+    
+    pipeline.on('info', (info) => {
+      console.log('[Sharp Pipeline Info]', photo.path, info);
+    });
 
-       return pipeline as unknown as Readable;
-     }
-   }
+    pipeline.pipe(passThrough);
+    
+    passThrough.on('data', (chunk) => {
+      console.log('[PassThrough data]', chunk.length);
+    });
+    passThrough.on('end', () => {
+      console.log('[PassThrough end]');
+    });
+    passThrough.on('error', (err) => {
+      console.error('[PassThrough error]', err.message);
+    });
+    passThrough.on('close', () => {
+      console.log('[PassThrough close]');
+    });
+
+    return passThrough;
+  }
+}

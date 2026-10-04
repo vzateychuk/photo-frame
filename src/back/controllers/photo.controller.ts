@@ -6,7 +6,7 @@ export class PhotoController {
   constructor(
     private readonly playService: IPlayService,
     private readonly imageProcessor: IImageProcessorService
-  ) {}
+  ) { }
 
   /**
    * Возвращает ID следующего случайного фото из плейлиста
@@ -51,10 +51,22 @@ export class PhotoController {
       });
 
       // 4. Отдача потока с соответствующим типом контента
-      reply
-        .header('Content-Type', 'image/jpeg')
-        .header('Cache-Control', 'public, max-age=3600')
-        .send(imageStream);
+      reply.raw.setHeader('Content-Type', 'image/jpeg');
+      reply.raw.setHeader('Cache-Control', 'public, max-age=3600');
+
+      // Ждём завершения стрима, чтобы Fastify не закрыл соединение раньше времени
+      await new Promise<void>((resolve, reject) => {
+        imageStream.pipe(reply.raw);
+
+        reply.raw.on('close', () => {
+          imageStream.destroy();
+          resolve(); // Клиент отвалился — считаем завершённым
+        });
+
+        imageStream.on('end', () => resolve());
+        imageStream.on('error', (err) => reject(err));
+      });
+
     } catch (err: any) {
       if (err.name === 'ZodError') {
         reply.status(400).send({ error: 'Invalid parameters', details: err.errors });
