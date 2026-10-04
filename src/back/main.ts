@@ -1,6 +1,7 @@
 // src/back/main.ts
 import path from 'node:path';
 import Fastify from 'fastify';
+import fastifyStatic from '@fastify/static';
 import { config } from './config/env.config.js';
 import { PhotoScannerService } from './services/scanner.service.js';
 import { PlaylistService } from './services/playlist.service.js';
@@ -56,7 +57,18 @@ const bootstrap = async () => {
   // API для получения изображения
   server.get('/api/photos/:id', photoController.getPhoto);
 
-  // 4. Запуск сервера
+  // 4. Статические файлы фронтенда (только в production)
+  if (config.NODE_ENV === 'production') {
+    const __filename = new URL(import.meta.url).pathname;
+    const __dirname = path.dirname(__filename);
+    await server.register(fastifyStatic, {
+      root: path.join(__dirname, '../public'),
+      prefix: '/',
+      decorateReply: false,
+    });
+  }
+
+  // 5. Запуск сервера
   try {
     await server.listen({
       port: config.PORT,

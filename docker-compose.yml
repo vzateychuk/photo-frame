@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  photoframe:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: photoframe
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOST=0.0.0.0
+      - PHOTOS_DIR=/data/photos
+      - LOG_LEVEL=info
+    volumes:
+      # Путь на хосте берется из HOST_PHOTOS_DIR (обязательно) или fallback
+      - ${HOST_PHOTOS_DIR}:/data/photos:ro
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

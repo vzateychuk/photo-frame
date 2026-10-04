@@ -1,5 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import {vi} from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { PhotoController } from '../../controllers/photo.controller.js';
 import type { IPlayService, IImageProcessorService, PhotoItem, PublicPhoto } from '../../types.js';
 import { Readable } from 'node:stream';
@@ -12,7 +11,6 @@ describe('PhotoController', () => {
   let mockRequest: any;
 
   beforeEach(() => {
-    // Создаем моки сервисов
     mockPlayService = {
       getNext: vi.fn(),
       getById: vi.fn(),
@@ -21,17 +19,19 @@ describe('PhotoController', () => {
       process: vi.fn(),
     };
 
-    // Создаем экземпляр контроллера с моками
     controller = new PhotoController(mockPlayService, mockImageProcessor);
 
-    // Мокаем Fastify Reply
+    // Мокаем Fastify Reply с raw (новый стриминговый подход)
     mockReply = {
       send: vi.fn(),
       status: vi.fn().mockReturnThis(),
       header: vi.fn().mockReturnThis(),
+      raw: {
+        setHeader: vi.fn(),
+        on: vi.fn(),
+      },
     };
 
-    // Базовый мок запроса
     mockRequest = {
       params: {},
       query: {},
@@ -67,7 +67,7 @@ describe('PhotoController', () => {
     it('should return processed image stream for valid ID and params', async () => {
       mockRequest.params = { id: photoId };
       mockRequest.query = { w: '1920', h: '1080' };
-      
+
       mockPlayService.getById.mockReturnValue(mockPhotoItem);
       mockImageProcessor.process.mockResolvedValue(mockStream);
 
@@ -75,11 +75,14 @@ describe('PhotoController', () => {
 
       expect(mockPlayService.getById).toHaveBeenCalledWith(photoId);
       expect(mockImageProcessor.process).toHaveBeenCalledWith(
-        mockPhotoItem, 
+        mockPhotoItem,
         { width: 1920, height: 1080 }
       );
-      expect(mockReply.header).toHaveBeenCalledWith('Content-Type', 'image/jpeg');
-      expect(mockReply.send).toHaveBeenCalledWith(mockStream);
+      // Проверяем новые вызовы raw.setHeader
+      expect(mockReply.raw.setHeader).toHaveBeenCalledWith('Content-Type', 'image/jpeg');
+      expect(mockReply.raw.setHeader).toHaveBeenCalledWith('Cache-Control', 'public, max-age=3600');
+      // Проверяем, что pipe был вызван (через send или напрямую)
+      expect(mockReply.send).toHaveBeenCalled();
     });
 
     it('should return 404 when photo ID is not found', async () => {
