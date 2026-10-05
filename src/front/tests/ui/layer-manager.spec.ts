@@ -74,6 +74,39 @@ describe('LayerManager', () => {
       await p2;
       expect(layerA.src).toContain('2.jpg');
     });
+
+    it('should reject and drop handlers when signal is aborted', async () => {
+      const controller = new AbortController();
+      const promise = layerManager.preloadImage(new URL('http://test.com/slow.jpg'), controller.signal);
+
+      controller.abort();
+
+      await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
+      expect(layerB.onload).toBeNull();
+      expect(layerB.onerror).toBeNull();
+      expect(layerB.getAttribute('src')).toBeNull();
+    });
+
+    it('should reject immediately for an already aborted signal', async () => {
+      const controller = new AbortController();
+      controller.abort();
+
+      await expect(
+        layerManager.preloadImage(new URL('http://test.com/x.jpg'), controller.signal),
+      ).rejects.toMatchObject({ name: 'AbortError' });
+      expect(layerB.getAttribute('src')).toBeNull();
+    });
+
+    it('should reject a pending preload when a new one starts', async () => {
+      const first = layerManager.preloadImage(new URL('http://test.com/1.jpg'));
+      const second = layerManager.preloadImage(new URL('http://test.com/2.jpg'));
+
+      await expect(first).rejects.toMatchObject({ name: 'AbortError' });
+
+      layerB.onload?.(new Event('load'));
+      await expect(second).resolves.toBeUndefined();
+      expect(layerB.src).toContain('2.jpg');
+    });
   });
 
   describe('swapLayers', () => {

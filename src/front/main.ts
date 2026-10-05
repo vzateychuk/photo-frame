@@ -1,15 +1,21 @@
 import { ApiClient } from './api/client.js';
 import { LayerManager } from './ui/layer-manager.js';
 import { SlideshowEngine } from './core/engine.js';
+import { startWatchdog } from './core/watchdog.js';
 
 /**
  * Парсит параметры URL для конфигурации.
+ * Размер экрана по умолчанию — физические пиксели (CSS × devicePixelRatio),
+ * как требует концепт для TV с DPR>1. ?w=&h= остаются ручным оверрайдом.
  */
 function getConfigFromUrl(): { intervalMs: number; screenWidth: number; screenHeight: number } {
   const params = new URLSearchParams(window.location.search);
   const intervalMs = Math.max(1000, Number(params.get('interval')) || 5000);
-  const screenWidth = Math.max(100, Math.min(3840, Number(params.get('w')) || screen.width));
-  const screenHeight = Math.max(100, Math.min(2160, Number(params.get('h')) || screen.height));
+  const dpr = window.devicePixelRatio || 1;
+  const physicalWidth = Math.round(screen.width * dpr);
+  const physicalHeight = Math.round(screen.height * dpr);
+  const screenWidth = Math.max(100, Math.min(3840, Number(params.get('w')) || physicalWidth));
+  const screenHeight = Math.max(100, Math.min(2160, Number(params.get('h')) || physicalHeight));
   return { intervalMs, screenWidth, screenHeight };
 }
 
@@ -76,6 +82,8 @@ async function main(): Promise<void> {
 
   const apiClient = new ApiClient({ baseUrl, intervalMs, screenWidth, screenHeight });
   const layerManager = new LayerManager(layerA, layerB);
+  // Единственный экземпляр на страницу: элементы управления (Старт/Стоп)
+  // должны получать эту ссылку, а не создавать новый движок.
   const engine = new SlideshowEngine(apiClient, layerManager, intervalMs);
 
   // Wake Lock (best effort)
@@ -94,7 +102,8 @@ async function main(): Promise<void> {
 
   // Запуск
   console.log('[PhotoFrame] Starting slideshow', { intervalMs, screenWidth, screenHeight });
-  await engine.start();
+  void engine.start();
+  startWatchdog(engine, { baseUrl });
 }
 
 // Запуск при готовности DOM

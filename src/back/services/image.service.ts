@@ -11,8 +11,12 @@ export class ImageProcessorService implements IImageProcessorService {
     dimensions: { width: number, height: number }
   ): Promise<Readable> {
 
-    const pipeline = sharp(photo.path)
-      .rotate()
+    // failOn: 'error' — пропускаем libjpeg-warning от Samsung JPEG
+    // («Invalid SOS parameters for sequential JPEG»), но по-прежнему
+    // падаем на truncated / реальных ошибках декодера.
+    // Вход: JPEG/PNG (по magic bytes, не по расширению); выход всегда JPEG.
+    const pipeline = sharp(photo.path, { failOn: 'error' })
+      .rotate() // EXIF Orientation
       .resize({
         width: dimensions.width,
         height: dimensions.height,

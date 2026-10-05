@@ -1,6 +1,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { GetPhotoParamsSchema, GetPhotoQuerySchema } from '../schemas/photo.schema.js';
 import type { IPlayService, IImageProcessorService } from '../types.js';
+import type { Readable } from 'node:stream';
 
 export class PhotoController {
   constructor(
@@ -27,48 +28,35 @@ export class PhotoController {
   };
 
   /**
-   * Возвращает бинарный поток изображения, ресайз которого выполняется на лету
+   * Возвращает бинарный поток изображения, ресайз которого выполняется на лету.
+   * Заголовки ставятся только после первого успешно прочитанного чанка,
+   * чтобы при ошибке Sharp можно было отдать JSON 500, а не image/jpeg.
    */
   public getPhoto = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
-      // 1. Валидация параметров (id, w, h) через Zod
       const { id } = GetPhotoParamsSchema.parse(req.params);
       const { w, h } = GetPhotoQuerySchema.parse(req.query);
 
-      // 2. Поиск фото в плейлисте
       const photoItem = this.playService.getById(id);
-      console.log('[Controller] Found photo:', photoItem); // <-- временно
 
       if (!photoItem) {
         reply.status(404).send({ error: 'Photo not found' });
         return;
       }
 
-      // 3. Потоковая обработка изображения (ресайз и EXIF)
       const imageStream = await this.imageProcessor.process(photoItem, {
         width: w,
         height: h,
       });
 
-      // 4. Отдача потока с соответствующим типом контента
-      reply.raw.setHeader('Content-Type', 'image/jpeg');
-      reply.raw.setHeader('Cache-Control', 'public, max-age=3600');
-
-      // Ждём завершения стрима, чтобы Fastify не закрыл соединение раньше времени
-      await new Promise<void>((resolve, reject) => {
-        imageStream.pipe(reply.raw);
-
-        reply.raw.on('close', () => {
-          imageStream.destroy();
-          resolve(); // Клиент отвалился — считаем завершённым
-        });
-
-        imageStream.on('end', () => resolve());
-        imageStream.on('error', (err) => reject(err));
-      });
-
+      await this.streamImage(imageStream, reply);
     } catch (err: any) {
-      if (err.name === 'ZodError') {
+      if (reply.raw.headersSent) {
+        reply.raw.destroy();
+        return;
+      }
+
+      if (err?.name === 'ZodError') {
         reply.status(400).send({ error: 'Invalid parameters', details: err.errors });
         return;
       }
@@ -76,4 +64,66 @@ export class PhotoController {
       reply.status(500).send({ error: 'Image processing failed' });
     }
   };
+
+  private streamImage(imageStream: Readable, reply: FastifyReply): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let headersSent = false;
+
+      const finish = (err?: Error) => {
+        if (settled) return;
+        settled = true;
+        imageStream.off('data', onFirstData);
+        imageStream.off('error', onError);
+        imageStream.off('end', onEndBeforeHeaders);
+        reply.raw.off('close', onClose);
+        reply.raw.off('finish', onFinish);
+
+        if (err) reject(err);
+        else resolve();
+      };
+
+      const onError = (err: Error) => {
+        imageStream.destroy();
+        if (headersSent) {
+          reply.raw.destroy();
+          finish();
+          return;
+        }
+        finish(err);
+      };
+
+      const onClose = () => {
+        imageStream.destroy();
+        finish();
+      };
+
+      const onFinish = () => finish();
+
+      const onEndBeforeHeaders = () => {
+        if (!headersSent) {
+          finish(new Error('Empty image stream'));
+        }
+      };
+
+      const onFirstData = (chunk: Buffer | string) => {
+        imageStream.off('data', onFirstData);
+        imageStream.off('end', onEndBeforeHeaders);
+
+        reply.hijack();
+        reply.raw.setHeader('Content-Type', 'image/jpeg');
+        reply.raw.setHeader('Cache-Control', 'public, max-age=3600');
+        headersSent = true;
+
+        reply.raw.write(chunk);
+        imageStream.pipe(reply.raw);
+        reply.raw.on('finish', onFinish);
+      };
+
+      imageStream.once('data', onFirstData);
+      imageStream.once('end', onEndBeforeHeaders);
+      imageStream.on('error', onError);
+      reply.raw.on('close', onClose);
+    });
+  }
 }

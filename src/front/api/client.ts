@@ -1,8 +1,12 @@
+import ky, { type KyInstance, type Options } from 'ky';
+
 export interface ApiClientConfig {
   baseUrl: string;
   intervalMs: number;
   screenWidth: number;
   screenHeight: number;
+  /** Переопределение настроек ky поверх дефолтов (для тестов). */
+  httpOptions?: Options;
 }
 
 export class ApiClient {
@@ -10,79 +14,38 @@ export class ApiClient {
   private readonly intervalMs: number;
   private readonly screenWidth: number;
   private readonly screenHeight: number;
+  private readonly http: KyInstance;
 
-  private static readonly MAX_RETRIES = 3;
-  private static readonly BASE_DELAY_MS = 1000;
+  static readonly REQUEST_TIMEOUT_MS = 10_000;
+  static readonly RETRY_LIMIT = 2;
 
   constructor(config: ApiClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
     this.intervalMs = config.intervalMs;
     this.screenWidth = config.screenWidth;
     this.screenHeight = config.screenHeight;
+
+    // Повторы: сетевые ошибки, таймауты и 408/413/429/500/502/503/504
+    // (дефолтный список ky). 404 «нет фото» не повторяется.
+    // Долгую недоступность сервера обрабатывает SlideshowEngine.
+    this.http = ky
+      .create({
+        baseUrl: `${this.baseUrl}/`,
+        timeout: ApiClient.REQUEST_TIMEOUT_MS,
+        retry: { limit: ApiClient.RETRY_LIMIT, retryOnTimeout: true },
+        headers: { Accept: 'application/json' },
+      })
+      .extend(config.httpOptions ?? {});
   }
 
-  /**
-   * Получает ID следующего фото с экспоненциальным бэкоффом при ошибках сети.
-   * На HTTP ошибки (non-ok) выбрасывает исключение сразу, без ретраев.
-   * Ретраи только на сетевые ошибки (fetch rejected).
-   */
-  async fetchNextPhotoId(): Promise<string> {
-    let lastError: Error;
-
-    for (let attempt = 0; attempt < ApiClient.MAX_RETRIES; attempt++) {
-      try {
-        const response = await fetch(`${this.baseUrl}/api/play/next`, {
-          method: 'GET',
-          headers: { Accept: 'application/json' },
-        });
-
-        if (!response.ok) {
-          // Любая HTTP ошибка — сразу кидаем, без ретраев
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-        if (!data?.id) {
-          throw new Error('Invalid response: missing photo ID');
-        }
-        return data.id;
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-
-        // HTTP ошибки (начинаются с "HTTP ") — не ретраим
-        if (lastError.message.startsWith('HTTP ')) {
-          throw lastError;
-        }
-
-        // Сетевая ошибка — ретраим с экспоненциальным бэкоффом
-        const delay = ApiClient.BASE_DELAY_MS * Math.pow(2, attempt);
-        await this.sleep(delay);
-      }
+  async fetchNextPhotoId(signal?: AbortSignal): Promise<string> {
+    const data = await this.http
+      .get('api/play/next', signal ? { signal } : {})
+      .json<{ id?: unknown }>();
+    if (typeof data?.id !== 'string' || data.id === '') {
+      throw new Error('Invalid response: missing photo ID');
     }
-
-    // Последняя попытка (attempt === MAX_RETRIES)
-    try {
-      const response = await fetch(`${this.baseUrl}/api/play/next`, {
-        method: 'GET',
-        headers: { Accept: 'application/json' },
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      if (!data?.id) {
-        throw new Error('Invalid response: missing photo ID');
-      }
-      return data.id;
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-      if (lastError.message.startsWith('HTTP ')) {
-        throw lastError;
-      }
-      throw new Error(`Failed to fetch next photo after ${ApiClient.MAX_RETRIES} retries: ${lastError!.message}`);
-    }
+    return data.id;
   }
 
   /**
@@ -97,9 +60,5 @@ export class ApiClient {
 
   getIntervalMs(): number {
     return this.intervalMs;
-  }
-
-  private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }

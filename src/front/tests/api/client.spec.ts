@@ -1,112 +1,125 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { HTTPError, TimeoutError } from 'ky';
 import { ApiClient } from '../../api/client.js';
 
-describe('ApiClient', () => {
-  let client: ApiClient;
-  const baseUrl = 'http://localhost:3000';
+const jsonResponse = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
 
-  beforeEach(() => {
-    client = new ApiClient({
-      baseUrl,
+describe('ApiClient', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  const createClient = (overrides: Partial<ConstructorParameters<typeof ApiClient>[0]> = {}) =>
+    new ApiClient({
+      baseUrl: 'http://localhost:3000',
       intervalMs: 5000,
       screenWidth: 1920,
       screenHeight: 1080,
+      httpOptions: {
+        fetch: fetchMock,
+        retry: { delay: () => 0 },
+      },
+      ...overrides,
     });
-    vi.useFakeTimers();
-  });
 
-  afterEach(() => {
-    vi.useRealTimers();
+  beforeEach(() => {
+    fetchMock = vi.fn();
   });
 
   describe('fetchNextPhotoId', () => {
     it('should return photo ID on successful response', async () => {
-      const mockResponse = { id: 'test-photo-123' };
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve(mockResponse),
-      });
+      fetchMock.mockResolvedValue(jsonResponse({ id: 'test-photo-123' }));
 
-      const result = await client.fetchNextPhotoId();
+      await expect(createClient().fetchNextPhotoId()).resolves.toBe('test-photo-123');
 
-      expect(result).toBe('test-photo-123');
-      expect(global.fetch).toHaveBeenCalledWith(
-        'http://localhost:3000/api/play/next',
-        expect.objectContaining({ method: 'GET' })
+      const request = fetchMock.mock.calls[0][0] as Request;
+      expect(request.url).toBe('http://localhost:3000/api/play/next');
+      expect(request.method).toBe('GET');
+    });
+
+    it('should retry on network error and succeed', async () => {
+      fetchMock
+        .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+        .mockResolvedValueOnce(jsonResponse({ id: 'test-photo-123' }));
+
+      await expect(createClient().fetchNextPhotoId()).resolves.toBe('test-photo-123');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('should retry on 502 (backend restarting behind nginx)', async () => {
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse({}, 502))
+        .mockResolvedValueOnce(jsonResponse({ id: 'test-photo-123' }));
+
+      await expect(createClient().fetchNextPhotoId()).resolves.toBe('test-photo-123');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('should give up after retry limit', async () => {
+      fetchMock.mockImplementation(async () => jsonResponse({}, 503));
+
+      await expect(createClient().fetchNextPhotoId()).rejects.toBeInstanceOf(HTTPError);
+      expect(fetchMock).toHaveBeenCalledTimes(1 + ApiClient.RETRY_LIMIT);
+    });
+
+    it('should not retry on 404', async () => {
+      fetchMock.mockResolvedValue(jsonResponse({ error: 'No photos available' }, 404));
+
+      await expect(createClient().fetchNextPhotoId()).rejects.toBeInstanceOf(HTTPError);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('should time out a hanging request', async () => {
+      fetchMock.mockImplementation(
+        (_input: Request, init?: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(init.signal!.reason));
+          }),
       );
-    });
-
-    it('should retry with exponential backoff on network error', async () => {
-      const mockResponse = { id: 'test-photo-123' };
-      global.fetch = vi
-        .fn()
-        .mockRejectedValueOnce(new Error('Network error'))
-        .mockRejectedValueOnce(new Error('Network error'))
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve(mockResponse),
-        });
-
-      const promise = client.fetchNextPhotoId();
-
-      // Fast-forward through retries (baseDelay=1000, maxRetries=3)
-      // attempt 0: delay 1000, attempt 1: delay 2000, attempt 2: delay 4000
-      await vi.advanceTimersByTimeAsync(1000 + 2000 + 4000);
-
-      const result = await promise;
-      expect(result).toBe('test-photo-123');
-      expect(global.fetch).toHaveBeenCalledTimes(3);
-    });
-
-    it('should throw after max retries exceeded', async () => {
-      global.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
-
-      const promise = client.fetchNextPhotoId();
-
-      // Ждем все ретраи: 1000 + 2000 + 4000 = 7000ms + финальная попытка
-      await vi.advanceTimersByTimeAsync(8000);
-
-      await expect(promise).rejects.toThrow('Failed to fetch next photo after 3 retries');
-      // 3 ретрая + 1 финальная попытка = 4 вызова
-      expect(global.fetch).toHaveBeenCalledTimes(4);
-    });
-
-    it('should throw on HTTP error (non-ok response)', async () => {
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: false,
-        status: 500,
-        statusText: 'Internal Server Error',
+      const client = createClient({
+        httpOptions: { fetch: fetchMock, timeout: 20, retry: 0 },
       });
 
-      await expect(client.fetchNextPhotoId()).rejects.toThrow('HTTP 500: Internal Server Error');
+      await expect(client.fetchNextPhotoId()).rejects.toBeInstanceOf(TimeoutError);
     });
 
-    it('should not retry on 404 error', async () => {
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: false,
-        status: 404,
-        statusText: 'Not Found',
-      });
+    it('should abort the request via signal without retrying', async () => {
+      fetchMock.mockImplementation(
+        (request: Request, init?: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            const signal = init?.signal ?? request.signal;
+            signal.addEventListener('abort', () => reject(signal.reason));
+          }),
+      );
+      const controller = new AbortController();
 
-      await expect(client.fetchNextPhotoId()).rejects.toThrow('HTTP 404: Not Found');
-      expect(global.fetch).toHaveBeenCalledTimes(1);
+      const promise = createClient().fetchNextPhotoId(controller.signal);
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+      controller.abort();
+
+      await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('should reject response without id', async () => {
+      fetchMock.mockResolvedValue(jsonResponse({}));
+
+      await expect(createClient().fetchNextPhotoId()).rejects.toThrow(
+        'Invalid response: missing photo ID',
+      );
     });
   });
 
   describe('buildImageUrl', () => {
     it('should build correct URL with default dimensions', () => {
-      const url = client.buildImageUrl('photo-123');
+      const url = createClient().buildImageUrl('photo-123');
       expect(url.toString()).toBe('http://localhost:3000/api/photos/photo-123?w=1920&h=1080');
     });
 
     it('should build URL with custom dimensions', () => {
-      client = new ApiClient({
-        baseUrl: 'http://localhost:3000',
-        intervalMs: 5000,
-        screenWidth: 1280,
-        screenHeight: 720,
-      });
-      const url = client.buildImageUrl('photo-123');
+      const url = createClient({ screenWidth: 1280, screenHeight: 720 }).buildImageUrl('photo-123');
       expect(url.toString()).toBe('http://localhost:3000/api/photos/photo-123?w=1280&h=720');
     });
   });

@@ -4,6 +4,7 @@ export class LayerManager {
   private activeLayer: HTMLImageElement;
   private inactiveLayer: HTMLImageElement;
   private readonly container: HTMLElement;
+  private cancelPendingPreload: ((reason: unknown) => void) | null = null;
 
   constructor(layerA: HTMLImageElement, layerB: HTMLImageElement) {
     this.layerA = layerA;
@@ -32,28 +33,63 @@ export class LayerManager {
   }
 
   /**
-   * Загружает изображение в неактивный слой.
-   * Возвращает промис, который разрешается при успешной загрузке
-   * или отклоняется при ошибке.
+   * Загружает и декодирует изображение в неактивном слое.
+   * Возвращает промис, который разрешается, когда кадр готов к показу,
+   * или отклоняется при ошибке либо отмене через signal.
+   * Декодирование до swapLayers нужно, чтобы кроссфейд не дёргался на слабой приставке.
    */
-  async preloadImage(url: URL): Promise<void> {
+  async preloadImage(url: URL, signal?: AbortSignal): Promise<void> {
+    const layer = this.inactiveLayer;
+    await this.loadInto(layer, url, signal);
+
+    if (typeof layer.decode === 'function') {
+      try {
+        await layer.decode();
+      } catch {
+        signal?.throwIfAborted();
+        throw new Error(`Failed to decode image: ${url.toString()}`);
+      }
+    }
+    signal?.throwIfAborted();
+  }
+
+  /**
+   * Новая загрузка отклоняет предыдущую незавершённую: обработчики слоя одни,
+   * и без этого её промис никогда бы не завершился.
+   */
+  private loadInto(layer: HTMLImageElement, url: URL, signal?: AbortSignal): Promise<void> {
+    this.cancelPendingPreload?.(new DOMException('Preload superseded', 'AbortError'));
+    signal?.throwIfAborted();
+
     return new Promise((resolve, reject) => {
-      const cleanup = () => {
-        this.inactiveLayer.onload = null;
-        this.inactiveLayer.onerror = null;
+      const settle = () => {
+        layer.onload = null;
+        layer.onerror = null;
+        signal?.removeEventListener('abort', onAbort);
+        this.cancelPendingPreload = null;
       };
 
-      this.inactiveLayer.onload = () => {
-        cleanup();
+      const cancel = (reason: unknown) => {
+        settle();
+        layer.removeAttribute('src');
+        reject(reason);
+      };
+
+      const onAbort = () => cancel(signal!.reason);
+
+      layer.onload = () => {
+        settle();
         resolve();
       };
 
-      this.inactiveLayer.onerror = () => {
-        cleanup();
+      layer.onerror = () => {
+        settle();
         reject(new Error(`Failed to load image: ${url.toString()}`));
       };
 
-      this.inactiveLayer.src = url.toString();
+      signal?.addEventListener('abort', onAbort, { once: true });
+      this.cancelPendingPreload = cancel;
+      layer.src = url.toString();
     });
   }
 
