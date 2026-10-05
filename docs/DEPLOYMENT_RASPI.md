@@ -4,32 +4,74 @@
 
 ## 1. Предварительные требования
 
-- **Оборудование**: Raspberry Pi (3, 4 или 5).
-- **Программное обеспечение**: 
-  - Установленный Docker.
-  - Установленный Docker Compose.
-  - Установленный Nginx (на хостовой ОС).
-- **Данные**: Локальная папка или Samba-шара с фотографиями (JPEG/PNG).
+### ПК разработки (сборка образа)
+- **Podman** (на машине разработчика). Образ собирают здесь под `linux/arm64` и переносят на Pi в виде `.tar`, чтобы не компилировать Sharp и native-зависимости на ARM.
+- Для кросс-сборки нужен QEMU/binfmt (обычно уже есть; если `podman build --platform linux/arm64` падает — см. шаг 1).
+
+### Raspberry Pi (запуск)
+- **Оборудование**: Raspberry Pi 3, 4 или 5.
+- **ПО на Pi**: Docker, Docker Compose, Nginx на хостовой ОС.
+- **Данные**: локальная папка или Samba-шара с фотографиями (JPEG/PNG).
 
 ## 2. Процесс развертывания
 
-### Шаг 1: Перенос образа
-Приложение распространяется в виде предварительно собранного Docker-образа, чтобы избежать длительной компиляции на ARM-архитектуре.
+### Шаг 1: Сборка ARM-образа на ПК (Podman)
 
-1. Перенесите файл `photo-frame-raspi.tar` на Raspberry Pi.
-2. Загрузите образ в Docker:
-   ```bash
-   docker load -i photo-frame-raspi.tar
-   ```
-3. Проверьте наличие образа в системе:
-   ```bash
-   docker image ls | grep photo-frame
-   ```
+В корне репозитория:
 
-### Шаг 2: Настройка окружения
-Для работы приложения необходимо указать путь к папке с фотографиями с помощью переменной окружения.
+```bash
+cd /path/to/photo-frame
 
-1. Определите путь к фотографиям в профиле вашего пользователя (например, в `~/.bashrc`):
+# Сборка под Raspberry Pi 4/5 (arm64)
+podman build --platform linux/arm64 -t photo-frame:raspi .
+
+# Экспорт в docker-compatible tar (чтобы на Pi принял docker load)
+podman save --format docker-archive -o photo-frame-raspi.tar photo-frame:raspi
+```
+
+Эквивалент через `buildx` (у Podman это обёртка над Buildah; отдельный `buildx create` не нужен):
+
+```bash
+podman buildx build --platform linux/arm64 -t photo-frame:raspi .
+podman save --format docker-archive -o photo-frame-raspi.tar photo-frame:raspi
+```
+
+Для Pi 3 (32-bit ARM) вместо `linux/arm64` используйте `linux/arm/v7`.
+
+**Если сборка ругается на qemu / binfmt**, один раз на ПК:
+
+```bash
+sudo podman run --rm --privileged multiarch/qemu-user-static --reset -p yes
+```
+
+После этого повторите `podman build --platform linux/arm64 …`.
+
+Имена:
+- тег образа: `photo-frame:raspi` (как в `docker-compose.yml`);
+- файл для переноса: `photo-frame-raspi.tar`;
+- контейнер на Pi: `photoframe`.
+
+### Шаг 2: Перенос на Raspberry Pi
+
+Скопируйте образ и `docker-compose.yml` (исходники на Pi не нужны):
+
+```bash
+scp photo-frame-raspi.tar docker-compose.yml user@pi-host:~/photo-frame/
+```
+
+На Pi загрузите образ в Docker:
+
+```bash
+cd ~/photo-frame
+docker load -i photo-frame-raspi.tar
+docker image ls | grep photo-frame
+```
+
+### Шаг 3: Настройка окружения
+
+Укажите путь к папке с фотографиями на хосте Pi.
+
+1. Определите путь (например, в `~/.bashrc`):
    ```bash
    export HOST_PHOTOS_DIR=/путь/к/вашим/фото
    ```
@@ -37,18 +79,29 @@
    ```bash
    source ~/.bashrc
    ```
-3. Создайте файл `.env` в директории проекта для Docker Compose:
+3. Создайте файл `.env` рядом с `docker-compose.yml`:
    ```bash
    echo "HOST_PHOTOS_DIR=$HOST_PHOTOS_DIR" > .env
    ```
 
-### Шаг 3: Запуск контейнера
-Используйте `docker-compose.yml` для запуска сервиса.
+### Шаг 4: Запуск контейнера (на Pi, Docker)
 
 ```bash
 docker compose up -d --no-build
 ```
-*Примечание: флаг `--no-build` обязателен, чтобы Docker использовал загруженный `.tar` образ, а не пытался собрать его из исходников.*
+
+Флаг `--no-build` обязателен: иначе Compose попытается собрать образ из Dockerfile на Pi.
+
+### Обновление уже задеплоенной версии
+
+На ПК: шаг 1 (`podman build` + `podman save`).  
+На Pi: шаг 2 (`docker load`) и снова:
+
+```bash
+docker compose up -d --no-build
+```
+
+Compose подхватит новый образ с тем же тегом `photo-frame:raspi`.
 
 ## 3. Инфраструктурные настройки
 
@@ -67,15 +120,31 @@ docker compose up -d --no-build
 
 **Основные параметры настройки:**
 - **Порт прослушивания**: 8082 (согласно сетевой конфигурации).
-- **Бэкенд**: `http://127.0.0.1:3000`.
-- **Оптимизация**: Параметр `proxy_buffering off` отключен для обеспечения плавного стриминга больших изображений.
+- **Бэкенд**: `http://localhost:3000`.
+- **Оптимизация**: `proxy_buffering off` отключает буферизацию, чтобы изображения передавались потоком без задержек.
 
-Пример фрагмента конфигурации:
+Пример конфигурации виртуального хоста:
 ```nginx
-location / {
-    proxy_pass http://127.0.0.1:3000;
-    proxy_buffering off;
-    # ... стандартные заголовки прокси ...
+server {
+    listen 8082;
+    listen [::]:8082;
+
+    server_name vez.vzateych.uk;
+
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Отключаем буферизацию, чтобы картинки передавались потоком без задержек
+        proxy_buffering off;
+    }
 }
 ```
 
