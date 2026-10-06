@@ -8,30 +8,61 @@ export interface PhotoItem {
   path: string;
 }
 
+export interface FolderItem {
+  id: string;
+  path: string;
+  name: string;
+  parentId: string | null;
+}
+
+export interface ScanResult {
+  photos: PhotoItem[];
+  folders: FolderItem[];
+}
+
 export class PhotoScannerService {
   constructor(private readonly rootDir: string) {}
 
-  async scan(): Promise<PhotoItem[]> {
+  async scan(): Promise<ScanResult> {
+    const rootDir = path.resolve(this.rootDir);
     let entries: Dirent<string>[];
     try {
-      entries = await fs.readdir(this.rootDir, {
+      entries = await fs.readdir(rootDir, {
         withFileTypes: true,
         recursive: true,
       });
     } catch (error) {
-      if (isNotFoundError(error)) return [];
+      if (isNotFoundError(error)) return { photos: [], folders: [] };
       throw error;
     }
 
-    return entries
-      .filter((entry) => entry.isFile() && /\.(jpe?g|png|gif|webp)$/i.test(entry.name))
-      .map((entry) => {
-        const fullPath = path.resolve(entry.parentPath, entry.name);
-        return {
+    const photos: PhotoItem[] = [];
+    const folders: FolderItem[] = [];
+
+    for (const entry of entries) {
+      const fullPath = path.resolve(entry.parentPath, entry.name);
+
+      if (entry.isFile() && /\.(jpe?g|png|gif|webp)$/i.test(entry.name)) {
+        photos.push({
           id: photoIdFromPath(fullPath),
           path: fullPath,
-        };
-      });
+        });
+        continue;
+      }
+
+      if (entry.isDirectory()) {
+        if (fullPath === rootDir) continue;
+        const parentPath = path.dirname(fullPath);
+        folders.push({
+          id: photoIdFromPath(fullPath),
+          path: fullPath,
+          name: entry.name,
+          parentId: parentPath === rootDir ? null : photoIdFromPath(parentPath),
+        });
+      }
+    }
+
+    return { photos, folders };
   }
 }
 

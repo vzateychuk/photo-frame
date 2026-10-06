@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { GetPhotoQuerySchema, GetPhotoParamsSchema } from '../../schemas/photo.schema.js';
+import {
+  GetPhotoQuerySchema,
+  GetPhotoParamsSchema,
+  GetNextQuerySchema,
+} from '../../schemas/photo.schema.js';
 
 describe('Photo API Schemas', () => {
   describe('GetPhotoQuerySchema', () => {
@@ -52,6 +56,29 @@ describe('Photo API Schemas', () => {
     it('should throw error if ID is empty or missing', () => {
       expect(() => GetPhotoParamsSchema.parse({})).toThrow();
       expect(() => GetPhotoParamsSchema.parse({ id: '' })).toThrow();
+    });
+  });
+
+  describe('GetNextQuerySchema', () => {
+    it('should allow missing folders', () => {
+      expect(GetNextQuerySchema.parse({})).toEqual({ folders: undefined });
+    });
+
+    it('should normalize a single folder id to an array', () => {
+      expect(GetNextQuerySchema.parse({ folders: 'folder-1' })).toEqual({
+        folders: ['folder-1'],
+      });
+    });
+
+    it('should split comma-separated folder ids', () => {
+      expect(GetNextQuerySchema.parse({ folders: 'a,b, c' })).toEqual({
+        folders: ['a', 'b', 'c'],
+      });
+    });
+
+    it('should reject empty folders value', () => {
+      expect(() => GetNextQuerySchema.parse({ folders: '' })).toThrow();
+      expect(() => GetNextQuerySchema.parse({ folders: ' , ,' })).toThrow();
     });
   });
 });

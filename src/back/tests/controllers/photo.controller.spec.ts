@@ -6,22 +6,46 @@ import { Writable } from 'node:stream';
 
 describe('PhotoController', () => {
   let controller: PhotoController;
-  let mockPlayService: vi.Mocked<IPlayService>;
-  let mockImageProcessor: vi.Mocked<IImageProcessorService>;
-  let mockReply: any;
-  let mockRequest: any;
+  let mockPlayService: {
+    getNext: ReturnType<typeof vi.fn>;
+    getById: ReturnType<typeof vi.fn>;
+    listFolders: ReturnType<typeof vi.fn>;
+  };
+  let mockImageProcessor: {
+    process: ReturnType<typeof vi.fn>;
+  };
+  let mockReply: {
+    send: ReturnType<typeof vi.fn>;
+    status: ReturnType<typeof vi.fn>;
+    header: ReturnType<typeof vi.fn>;
+    hijack: ReturnType<typeof vi.fn>;
+    raw: Writable & {
+      setHeader: ReturnType<typeof vi.fn>;
+      headersSent: boolean;
+      destroy: ReturnType<typeof vi.fn>;
+    };
+  };
+  let mockRequest: {
+    params: Record<string, unknown>;
+    query: Record<string, unknown>;
+    log: { warn: ReturnType<typeof vi.fn> };
+  };
   let responseChunks: Buffer[];
 
   beforeEach(() => {
     mockPlayService = {
       getNext: vi.fn(),
       getById: vi.fn(),
+      listFolders: vi.fn(),
     };
     mockImageProcessor = {
       process: vi.fn(),
     };
 
-    controller = new PhotoController(mockPlayService, mockImageProcessor);
+    controller = new PhotoController(
+      mockPlayService as unknown as IPlayService,
+      mockImageProcessor as unknown as IImageProcessorService,
+    );
     responseChunks = [];
 
     const raw = new Writable({
@@ -29,17 +53,20 @@ describe('PhotoController', () => {
         responseChunks.push(Buffer.from(chunk));
         cb();
       },
-    });
-    // эмулируем HTTP response
-    (raw as any).setHeader = vi.fn();
-    (raw as any).headersSent = false;
-    const origWrite = raw.write.bind(raw);
-    (raw as any).write = (chunk: any, encoding?: any, cb?: any) => {
-      (raw as any).headersSent = true;
-      mockReply.raw.headersSent = true;
-      return origWrite(chunk, encoding, cb);
+    }) as Writable & {
+      setHeader: ReturnType<typeof vi.fn>;
+      headersSent: boolean;
+      destroy: ReturnType<typeof vi.fn>;
     };
-    (raw as any).destroy = vi.fn();
+    raw.setHeader = vi.fn();
+    raw.headersSent = false;
+    const origWrite = raw.write.bind(raw);
+    raw.write = ((chunk: unknown, encoding?: unknown, cb?: unknown) => {
+      raw.headersSent = true;
+      mockReply.raw.headersSent = true;
+      return origWrite(chunk as never, encoding as never, cb as never);
+    }) as typeof raw.write;
+    raw.destroy = vi.fn();
 
     mockReply = {
       send: vi.fn(),
@@ -52,27 +79,69 @@ describe('PhotoController', () => {
     mockRequest = {
       params: {},
       query: {},
+      log: { warn: vi.fn() },
     };
   });
 
   describe('getNext', () => {
     it('should return 200 and the next photo ID when available', async () => {
       const mockPhoto: PublicPhoto = { id: 'photo-123' };
-      mockPlayService.getNext.mockReturnValue(mockPhoto);
+      mockPlayService.getNext.mockReturnValue({ photo: mockPhoto, unknownFolderIds: [] });
 
-      await controller.getNext(mockRequest, mockReply);
+      await controller.getNext(mockRequest as never, mockReply as never);
 
-      expect(mockPlayService.getNext).toHaveBeenCalled();
+      expect(mockPlayService.getNext).toHaveBeenCalledWith(undefined);
       expect(mockReply.send).toHaveBeenCalledWith(mockPhoto);
     });
 
-    it('should return 404 when no photo is available', async () => {
-      mockPlayService.getNext.mockReturnValue(null);
+    it('should pass comma-separated folders query to the play service', async () => {
+      mockRequest.query = { folders: 'folder-a,folder-b' };
+      mockPlayService.getNext.mockReturnValue({
+        photo: { id: 'photo-1' },
+        unknownFolderIds: [],
+      });
 
-      await controller.getNext(mockRequest, mockReply);
+      await controller.getNext(mockRequest as never, mockReply as never);
+
+      expect(mockPlayService.getNext).toHaveBeenCalledWith(['folder-a', 'folder-b']);
+    });
+
+    it('should return 404 when no photo is available', async () => {
+      mockPlayService.getNext.mockReturnValue({ photo: null, unknownFolderIds: [] });
+
+      await controller.getNext(mockRequest as never, mockReply as never);
 
       expect(mockReply.status).toHaveBeenCalledWith(404);
       expect(mockReply.send).toHaveBeenCalledWith({ error: 'No photos available' });
+    });
+
+    it('should log and skip unknown folder ids while returning a photo', async () => {
+      mockPlayService.getNext.mockReturnValue({
+        photo: { id: 'photo-1' },
+        unknownFolderIds: ['missing-folder'],
+      });
+
+      await controller.getNext(mockRequest as never, mockReply as never);
+
+      expect(mockRequest.log.warn).toHaveBeenCalledWith(
+        { folderId: 'missing-folder' },
+        'Unknown folder id in folders filter, skipped',
+      );
+      expect(mockReply.send).toHaveBeenCalledWith({ id: 'photo-1' });
+      expect(mockReply.status).not.toHaveBeenCalledWith(404);
+    });
+  });
+
+  describe('listFolders', () => {
+    it('should return public folder list', async () => {
+      const folders = [
+        { id: 'f1', name: 'vacation', parentId: null, photoCount: 2 },
+      ];
+      mockPlayService.listFolders.mockReturnValue(folders);
+
+      await controller.listFolders(mockRequest as never, mockReply as never);
+
+      expect(mockReply.send).toHaveBeenCalledWith({ folders });
     });
   });
 
@@ -89,13 +158,13 @@ describe('PhotoController', () => {
         Readable.from([Buffer.from('fake-jpeg-bytes')]),
       );
 
-      await controller.getPhoto(mockRequest, mockReply);
+      await controller.getPhoto(mockRequest as never, mockReply as never);
 
       expect(mockPlayService.getById).toHaveBeenCalledWith(photoId);
-      expect(mockImageProcessor.process).toHaveBeenCalledWith(
-        mockPhotoItem,
-        { width: 1920, height: 1080 },
-      );
+      expect(mockImageProcessor.process).toHaveBeenCalledWith(mockPhotoItem, {
+        width: 1920,
+        height: 1080,
+      });
       expect(mockReply.hijack).toHaveBeenCalled();
       expect(mockReply.raw.setHeader).toHaveBeenCalledWith('Content-Type', 'image/jpeg');
       expect(mockReply.raw.setHeader).toHaveBeenCalledWith('Cache-Control', 'public, max-age=3600');
@@ -107,7 +176,7 @@ describe('PhotoController', () => {
       mockRequest.params = { id: 'unknown' };
       mockPlayService.getById.mockReturnValue(null);
 
-      await controller.getPhoto(mockRequest, mockReply);
+      await controller.getPhoto(mockRequest as never, mockReply as never);
 
       expect(mockReply.status).toHaveBeenCalledWith(404);
       expect(mockReply.send).toHaveBeenCalledWith({ error: 'Photo not found' });
@@ -125,7 +194,7 @@ describe('PhotoController', () => {
       });
       mockImageProcessor.process.mockResolvedValue(failing);
 
-      await controller.getPhoto(mockRequest, mockReply);
+      await controller.getPhoto(mockRequest as never, mockReply as never);
 
       expect(mockReply.status).toHaveBeenCalledWith(500);
       expect(mockReply.send).toHaveBeenCalledWith({ error: 'Image processing failed' });
@@ -137,7 +206,7 @@ describe('PhotoController', () => {
       mockPlayService.getById.mockReturnValue(mockPhotoItem);
       mockImageProcessor.process.mockRejectedValue(new Error('Sharp error'));
 
-      await controller.getPhoto(mockRequest, mockReply);
+      await controller.getPhoto(mockRequest as never, mockReply as never);
 
       expect(mockReply.status).toHaveBeenCalledWith(500);
       expect(mockReply.send).toHaveBeenCalledWith({ error: 'Image processing failed' });

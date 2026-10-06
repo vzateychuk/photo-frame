@@ -33,10 +33,10 @@ describe('PhotoScannerService', () => {
       fs.writeFile(path.join(subdir, 'readme.md'), ''),
     ]);
 
-    const photos = await service.scan();
+    const { photos } = await service.scan();
 
     expect(photos).toHaveLength(8);
-    const paths = photos.map(p => p.path);
+    const paths = photos.map((p) => p.path);
     expect(paths).toContain(path.join(rootDir, 'photo1.jpg'));
     expect(paths).toContain(path.join(rootDir, 'photo2.png'));
     expect(paths).toContain(path.join(rootDir, 'anim.gif'));
@@ -47,12 +47,35 @@ describe('PhotoScannerService', () => {
     expect(paths).toContain(path.join(subdir, 'photo6.WEBP'));
     expect(paths).not.toContain(path.join(rootDir, 'notes.txt'));
     expect(paths).not.toContain(path.join(subdir, 'readme.md'));
-    photos.forEach(p => {
+    photos.forEach((p) => {
       expect(p.id).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
       );
       expect(p.id).toBe(photoIdFromPath(p.path));
     });
+  });
+
+  it('should index folders with stable ids and parent links', async () => {
+    const vacation = path.join(rootDir, 'vacation');
+    const day1 = path.join(vacation, 'day1');
+    await fs.mkdir(day1, { recursive: true });
+    await fs.writeFile(path.join(day1, 'a.jpg'), '');
+    await fs.writeFile(path.join(rootDir, 'root.jpg'), '');
+
+    const { photos, folders } = await service.scan();
+
+    expect(photos).toHaveLength(2);
+    expect(folders).toHaveLength(2);
+
+    const vacationFolder = folders.find((f) => f.name === 'vacation');
+    const day1Folder = folders.find((f) => f.name === 'day1');
+    expect(vacationFolder).toBeDefined();
+    expect(day1Folder).toBeDefined();
+    expect(vacationFolder!.id).toBe(photoIdFromPath(vacation));
+    expect(vacationFolder!.parentId).toBeNull();
+    expect(day1Folder!.id).toBe(photoIdFromPath(day1));
+    expect(day1Folder!.parentId).toBe(vacationFolder!.id);
+    expect(folders.some((f) => f.path === rootDir)).toBe(false);
   });
 
   it('should assign the same id for the same path across scans', async () => {
@@ -61,10 +84,10 @@ describe('PhotoScannerService', () => {
     const first = await service.scan();
     const second = await service.scan();
 
-    expect(first).toHaveLength(1);
-    expect(second).toHaveLength(1);
-    expect(first[0]!.id).toBe(second[0]!.id);
-    expect(first[0]!.id).toBe(photoIdFromPath(first[0]!.path));
+    expect(first.photos).toHaveLength(1);
+    expect(second.photos).toHaveLength(1);
+    expect(first.photos[0]!.id).toBe(second.photos[0]!.id);
+    expect(first.photos[0]!.id).toBe(photoIdFromPath(first.photos[0]!.path));
   });
 
   it('should assign different ids for different paths', async () => {
@@ -73,7 +96,7 @@ describe('PhotoScannerService', () => {
       fs.writeFile(path.join(rootDir, 'b.jpg'), 'same-bytes'),
     ]);
 
-    const photos = await service.scan();
+    const { photos } = await service.scan();
     const ids = new Set(photos.map((p) => p.id));
 
     expect(photos).toHaveLength(2);
@@ -81,20 +104,22 @@ describe('PhotoScannerService', () => {
   });
 
   it('should handle empty directory', async () => {
-    const photos = await service.scan();
-    expect(photos).toEqual([]);
+    const result = await service.scan();
+    expect(result).toEqual({ photos: [], folders: [] });
   });
 
-  it('should return empty array if root directory does not exist', async () => {
+  it('should return empty arrays if root directory does not exist', async () => {
     service = new PhotoScannerService(path.join(rootDir, 'missing'));
-    const photos = await service.scan();
-    expect(photos).toEqual([]);
+    const result = await service.scan();
+    expect(result).toEqual({ photos: [], folders: [] });
   });
 
-  it('should ignore directories during final filter', async () => {
+  it('should ignore empty directories in photo list but keep them in folders', async () => {
     await fs.mkdir(path.join(rootDir, 'folder'));
-    const photos = await service.scan();
+    const { photos, folders } = await service.scan();
     expect(photos).toEqual([]);
+    expect(folders).toHaveLength(1);
+    expect(folders[0]!.name).toBe('folder');
   });
 });
 

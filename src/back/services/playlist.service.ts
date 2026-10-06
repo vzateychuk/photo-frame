@@ -1,65 +1,152 @@
-export interface PhotoItem {
-  id: string;
-  path: string;
-}
+import path from 'node:path';
+import type {
+  FolderId,
+  FolderItem,
+  PhotoItem,
+  PlayNextResult,
+  PublicFolder,
+  PublicPhoto,
+} from '../types.js';
 
-export interface PublicPhoto {
-  id: string;
+export type { PhotoItem, PublicPhoto } from '../types.js';
+
+interface PlaylistCursor {
+  playlist: PhotoItem[];
+  currentIndex: number;
 }
 
 export class PlaylistService {
   private photos: PhotoItem[] = [];
-  private playlist: PhotoItem[] = [];
-  private currentIndex = 0;
+  private folders: FolderItem[] = [];
+  private folderById = new Map<FolderId, FolderItem>();
+  private scopes = new Map<string, PlaylistCursor>();
 
   /**
-   * Загружает список фотографий в память и инициализирует первый плейлист
+   * Загружает фото и папки в память и сбрасывает плейлисты.
    */
-  loadPhotos(photos: PhotoItem[]): void {
+  load(photos: PhotoItem[], folders: FolderItem[] = []): void {
     this.photos = [...photos];
-    this.shuffleAndReset();
+    this.folders = [...folders];
+    this.folderById = new Map(folders.map((folder) => [folder.id, folder]));
+    this.scopes.clear();
+  }
+
+  /** @deprecated Используйте load(). Оставлено для совместимости тестов. */
+  loadPhotos(photos: PhotoItem[]): void {
+    this.load(photos, []);
   }
 
   /**
    * Возвращает следующее фото из плейлиста.
-   * Если список исчерпан, перемешивает его заново и начинает с начала.
+   * Без folderIds — весь архив. С folderIds — объединение выбранных папок
+   * и всех вложенных, без дублей. Неизвестные ID пропускаются и возвращаются
+   * в unknownFolderIds (только при первом обращении к этому набору).
    */
-  getNext(): PublicPhoto | null {
-    if (this.photos.length === 0) {
-      return null;
+  getNext(folderIds?: readonly FolderId[]): PlayNextResult {
+    const resolved = this.resolveScope(folderIds);
+    let cursor = this.scopes.get(resolved.scopeKey);
+    let unknownFolderIds: FolderId[] = [];
+
+    if (!cursor) {
+      unknownFolderIds = resolved.unknownFolderIds;
+      if (resolved.photos.length === 0) {
+        return { photo: null, unknownFolderIds };
+      }
+      cursor = { playlist: shuffle(resolved.photos), currentIndex: 0 };
+      this.scopes.set(resolved.scopeKey, cursor);
     }
 
-    if (this.currentIndex >= this.playlist.length) {
-      this.shuffleAndReset();
+    if (cursor.currentIndex >= cursor.playlist.length) {
+      cursor.playlist = shuffle(cursor.playlist);
+      cursor.currentIndex = 0;
     }
 
-    const photo = this.playlist[this.currentIndex];
-    this.currentIndex++;
-
-    // Возвращаем только публичные данные (без пути к файлу)
-    return { id: photo!.id };
+    const photoItem = cursor.playlist[cursor.currentIndex];
+    cursor.currentIndex += 1;
+    const photo: PublicPhoto | null = photoItem ? { id: photoItem.id } : null;
+    return { photo, unknownFolderIds };
   }
 
-  /**
-   * Возвращает полную информацию о фото по ID (включая путь к файлу).
-   * Используется для получения файла для обработки.
-   */
   getById(id: string): PhotoItem | null {
-    return this.photos.find(p => p.id === id) ?? null;
+    return this.photos.find((p) => p.id === id) ?? null;
   }
 
-  private shuffleAndReset(): void {
-    // Копируем массив для перемешивания, чтобы не менять исходный список всех фото
-    this.playlist = [...this.photos];
-    
-    // Алгоритм Фишера-Йейтса для честного перемешивания
-    for (let i = this.playlist.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      const temp = this.playlist[i];
-      this.playlist[i] = this.playlist[j]!;
-      this.playlist[j] = temp!;
-    }
-    
-    this.currentIndex = 0;
+  listFolders(): PublicFolder[] {
+    return this.folders.map((folder) => ({
+      id: folder.id,
+      name: folder.name,
+      parentId: folder.parentId,
+      photoCount: this.photos.filter((photo) => isPathInside(folder.path, photo.path)).length,
+    }));
   }
+
+  private resolveScope(folderIds?: readonly FolderId[]): {
+    photos: PhotoItem[];
+    scopeKey: string;
+    unknownFolderIds: FolderId[];
+  } {
+    if (!folderIds || folderIds.length === 0) {
+      return { photos: [...this.photos], scopeKey: '', unknownFolderIds: [] };
+    }
+
+    const uniqueIds = [...new Set(folderIds)];
+    const knownFolderIds: FolderId[] = [];
+    const unknownFolderIds: FolderId[] = [];
+    const folderPaths: string[] = [];
+
+    for (const id of uniqueIds) {
+      const folder = this.folderById.get(id);
+      if (!folder) {
+        unknownFolderIds.push(id);
+        continue;
+      }
+      knownFolderIds.push(id);
+      folderPaths.push(folder.path);
+    }
+
+    if (knownFolderIds.length === 0) {
+      return {
+        photos: [],
+        scopeKey: `unknown:${scopeKey(uniqueIds)}`,
+        unknownFolderIds,
+      };
+    }
+
+    const seen = new Set<string>();
+    const photos: PhotoItem[] = [];
+    for (const photo of this.photos) {
+      if (seen.has(photo.id)) continue;
+      if (folderPaths.some((folderPath) => isPathInside(folderPath, photo.path))) {
+        seen.add(photo.id);
+        photos.push(photo);
+      }
+    }
+
+    return {
+      photos,
+      scopeKey: scopeKey(knownFolderIds),
+      unknownFolderIds,
+    };
+  }
+}
+
+function scopeKey(folderIds: readonly FolderId[]): string {
+  return [...new Set(folderIds)].sort().join(',');
+}
+
+function shuffle<T>(items: T[]): T[] {
+  const result = [...items];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = result[i]!;
+    result[i] = result[j]!;
+    result[j] = tmp;
+  }
+  return result;
+}
+
+/** True if filePath is inside folderPath (file itself, not the folder path). */
+export function isPathInside(folderPath: string, filePath: string): boolean {
+  const relative = path.relative(folderPath, filePath);
+  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
 }

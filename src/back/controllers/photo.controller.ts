@@ -1,20 +1,31 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { GetPhotoParamsSchema, GetPhotoQuerySchema } from '../schemas/photo.schema.js';
+import {
+  GetNextQuerySchema,
+  GetPhotoParamsSchema,
+  GetPhotoQuerySchema,
+} from '../schemas/photo.schema.js';
 import type { IPlayService, IImageProcessorService } from '../types.js';
 import type { Readable } from 'node:stream';
 
 export class PhotoController {
   constructor(
     private readonly playService: IPlayService,
-    private readonly imageProcessor: IImageProcessorService
-  ) { }
+    private readonly imageProcessor: IImageProcessorService,
+  ) {}
 
   /**
-   * Возвращает ID следующего случайного фото из плейлиста
+   * Возвращает ID следующего случайного фото из плейлиста.
+   * Опциональный query `folders=id1,id2` ограничивает набор указанными папками (рекурсивно).
+   * Неизвестные ID папок пропускаются и пишутся в лог.
    */
   public getNext = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
-      const photo = this.playService.getNext();
+      const { folders } = GetNextQuerySchema.parse(req.query);
+      const { photo, unknownFolderIds } = this.playService.getNext(folders);
+
+      for (const folderId of unknownFolderIds) {
+        req.log.warn({ folderId }, 'Unknown folder id in folders filter, skipped');
+      }
 
       if (!photo) {
         reply.status(404).send({ error: 'No photos available' });
@@ -23,6 +34,23 @@ export class PhotoController {
 
       reply.send(photo);
     } catch (err) {
+      if (isZodError(err)) {
+        reply.status(400).send({ error: 'Invalid parameters', details: err.issues });
+        return;
+      }
+
+      reply.status(500).send({ error: 'Internal server error' });
+    }
+  };
+
+  /**
+   * Список папок архива: id, имя, родитель, число фото (включая вложенные).
+   * Пути на диске не отдаются.
+   */
+  public listFolders = async (_req: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    try {
+      reply.send({ folders: this.playService.listFolders() });
+    } catch {
       reply.status(500).send({ error: 'Internal server error' });
     }
   };
@@ -50,14 +78,14 @@ export class PhotoController {
       });
 
       await this.streamImage(imageStream, reply);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (reply.raw.headersSent) {
         reply.raw.destroy();
         return;
       }
 
-      if (err?.name === 'ZodError') {
-        reply.status(400).send({ error: 'Invalid parameters', details: err.errors });
+      if (isZodError(err)) {
+        reply.status(400).send({ error: 'Invalid parameters', details: err.issues });
         return;
       }
 
@@ -126,4 +154,13 @@ export class PhotoController {
       reply.raw.on('close', onClose);
     });
   }
+}
+
+function isZodError(err: unknown): err is { name: string; issues: unknown } {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'name' in err &&
+    (err as { name: string }).name === 'ZodError'
+  );
 }

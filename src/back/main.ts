@@ -31,17 +31,17 @@ const bootstrap = async () => {
   // 1. Сканируем папку с фото при старте
   const photosDir = path.resolve(config.PHOTOS_DIR);
   const scanner = new PhotoScannerService(photosDir);
-  const photos = await scanner.scan();
+  const { photos, folders } = await scanner.scan();
 
   if (photos.length === 0) {
     server.log.warn(`В директории ${photosDir} не найдено фото (JPEG/PNG/GIF/WebP)`);
   } else {
-    server.log.info(`Найдено фото: ${photos.length}`);
+    server.log.info(`Найдено фото: ${photos.length}, папок: ${folders.length}`);
   }
 
   // 2. Инициализируем сервисы
   const playlistService = new PlaylistService();
-  playlistService.loadPhotos(photos);
+  playlistService.load(photos, folders);
 
   const imageProcessor = new ImageProcessorService();
   const photoController = new PhotoController(playlistService, imageProcessor);
@@ -51,8 +51,11 @@ const bootstrap = async () => {
     return { status: 'ok', timestamp: new Date().toISOString() };
   });
 
-  // API для плейлиста
+  // API для плейлиста (опциональный ?folders=id1,id2)
   server.get('/api/play/next', photoController.getNext);
+
+  // Каталог папок (id без путей на диске)
+  server.get('/api/catalog/folders', photoController.listFolders);
 
   // API для получения изображения
   server.get('/api/photos/:id', photoController.getPhoto);
