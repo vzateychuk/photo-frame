@@ -26,7 +26,7 @@
 
 - **Backend**: Node.js + Fastify, TypeScript (ESM)
 - **Frontend**: Vanilla TS + Vite (без фреймворков)
-- **Коммуникация**: 2 REST эндпоинта, бинарный стрим для фото
+- **Коммуникация**: REST (`/api/play/next`, `/api/catalog/folders`, `/api/photos/:id`), бинарный стрим для фото
 
 ---
 
@@ -51,16 +51,21 @@ EnvSchema = z.object({
 ### 2.2 Сканирование (`src/back/services/scanner.service.ts`)
 
 - `PhotoScannerService.scan()` — рекурсивный `fs.readdir` с `withFileTypes: true`
-- Фильтр: только `.jpg`, `.jpeg`, `.png` (case-insensitive)
-- Возвращает `PhotoItem[]`: `{ id: UUID, path: absolutePath }`
-- Пути делаются абсолютными через `path.resolve()` — критично для Sharp
+- Фото: `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp` (case-insensitive)
+- Папки: все каталоги внутри `PHOTOS_DIR`, кроме самого корня
+- Возвращает `{ photos, folders }`; id = SHA-256 абсолютного пути в UUID-форме (`photoIdFromPath`)
+- Пути абсолютные через `path.resolve()` — критично для Sharp и стабильности id
 
 ### 2.3 Плейлист (`src/back/services/playlist.service.ts`)
 
-- `PlaylistService` — in-memory, инициализируется при старте
-- Fisher-Yates shuffle при загрузке и при завершении цикла
-- `getNext()` → `PublicPhoto { id }` (путь не утекает)
+- `PlaylistService` — in-memory, `load(photos, folders)` при старте
+- Отдельный shuffle-курсор на каждый набор папок (ключ — отсортированные известные id)
+- `getNext(folderIds?)` → `{ photo, unknownFolderIds }`
+  - без `folderIds` — весь архив
+  - с `folderIds` — объединение папок и вложенных, без дублей фото
+  - неизвестные id пропускаются и возвращаются в `unknownFolderIds` (лог в контроллере)
 - `getById(id)` → `PhotoItem { id, path }` для процессора
+- `listFolders()` → публичный каталог без путей на диске
 
 ### 2.4 Обработка изображений (`src/back/services/image.service.ts`)
 
@@ -80,23 +85,19 @@ Pipeline Sharp:
 ### 2.5 Контроллер (`src/back/controllers/photo.controller.ts`)
 
 **`GET /api/play/next`**
-- `playService.getNext()` → `{ id }` или 404 если пусто
+- Query: опциональный `folders=id1,id2` (`GetNextQuerySchema`)
+- `playService.getNext(folders)` → `{ id }` или 404 если пусто
+- Неизвестные folder id → `req.log.warn`, показ из оставшихся папок
+
+**`GET /api/catalog/folders`**
+- `playService.listFolders()` → `{ folders: [{ id, name, parentId, photoCount }] }`
+- `photoCount` включает вложенные папки; пути на диск не отдаются
 
 **`GET /api/photos/:id`**
 1. Валидация: `GetPhotoParamsSchema` (id), `GetPhotoQuerySchema` (w, h)
 2. `playService.getById(id)` → `PhotoItem` или 404
 3. `imageProcessor.process(item, {w, h})` → `Readable`
-4. **Стриминг в ответ:**
-   ```typescript
-   reply.raw.setHeader('Content-Type', 'image/jpeg');
-   reply.raw.setHeader('Cache-Control', 'public, max-age=3600');
-   await new Promise((resolve, reject) => {
-     imageStream.pipe(reply.raw);
-     imageStream.on('end', resolve);
-     imageStream.on('error', reject);
-     reply.raw.on('close', () => { imageStream.destroy(); resolve(); });
-   });
-   ```
+4. Стриминг JPEG после первого успешного чанка (иначе JSON 500)
 5. Ошибки Zod → 400, ошибки процессинга → 500
 
 ### 2.6 Роуты (`src/back/main.ts`)
@@ -104,6 +105,7 @@ Pipeline Sharp:
 ```typescript
 server.get('/health', ...);
 server.get('/api/play/next', photoController.getNext);
+server.get('/api/catalog/folders', photoController.listFolders);
 server.get('/api/photos/:id', photoController.getPhoto);
 ```
 
@@ -116,18 +118,32 @@ server.get('/api/photos/:id', photoController.getPhoto);
 { "status": "ok", "timestamp": "2024-..." }
 ```
 
-### `GET /api/play/next`
+### `GET /api/catalog/folders`
 **Response 200:**
 ```json
-{ "id": "uuid-v4" }
+{
+  "folders": [
+    { "id": "...", "name": "vacation", "parentId": null, "photoCount": 12 },
+    { "id": "...", "name": "day1", "parentId": "<parent-id>", "photoCount": 4 }
+  ]
+}
+```
+
+### `GET /api/play/next`
+**Query (optional):** `folders=id1,id2` — CSV идентификаторов папок.
+
+**Response 200:**
+```json
+{ "id": "uuid-shaped-id" }
 ```
 **Response 404:**
 ```json
 { "error": "No photos available" }
 ```
+**Response 400:** пустой или некорректный `folders`
 
 ### `GET /api/photos/:id?w=1920&h=1080`
-- `id` — UUID из `/api/play/next`
+- `id` — id из `/api/play/next` или известный стабильный id
 - `w` — ширина (100–3840, default 1920)
 - `h` — высота (100–2160, default 1080)
 
@@ -141,18 +157,21 @@ server.get('/api/photos/:id', photoController.getPhoto);
 ## 4. Frontend — детали (`src/front/`)
 
 ### Архитектура классов
-- `ApiClient` — запросы к бэкенду, retry с backoff при ошибках сети
+- `ApiClient` — запросы к бэкенду (ky: retry/timeout); опционально передаёт `folders` в `/api/play/next`
 - `LayerManager` — два `<img>` слоя, crossfade через CSS `opacity` + `transition`
 - `SlideshowEngine` — цикл: `fetchNextId` → `preload` → `swap` → `sleep(interval)`
+- `parseFolderIds` — CSV из `?folders=` адресной строки страницы
 
 ### Ключевые моменты
 - Предзагрузка: показан слой А, загружается в слой Б → swap
 - Ошибка загрузки фото → skip → следующий
 - Интервал смены: `?interval=5000` (мс), default 5000
+- Фильтр папок: `?folders=id1,id2` (без параметра — весь архив)
 - Wake Lock API — попытка удержать экран (HTTPS only)
+- `baseUrl = location.origin`; в Vite dev `/api` и `/health` проксируются на `:3000`
 
 ### Точка входа
-`src/front/main.ts` → инициализация движка, монтирование в `#app`
+`src/front/main.ts` → инициализация движка, монтирование слайд-шоу
 
 ---
 
@@ -164,11 +183,12 @@ npm run test:ui   # с UI
 ```
 
 ### Покрытие
-- `playlist.service.spec.ts` — shuffle, цикличность, не утечка путей
-- `scanner.service.spec.ts` — рекурсивный скан, фильтры, ошибки FS
-- `photo.schema.spec.ts` — Zod схемы: defaults, coercion, границы, ошибки
-- `photo.controller.spec.ts` — моки сервисов, 200/404/500, валидация
+- `playlist.service.spec.ts` — shuffle, фильтр папок, дедуп, неизвестные id, каталог
+- `scanner.service.spec.ts` — рекурсивный скан, папки, стабильные id, ошибки FS
+- `photo.schema.spec.ts` — Zod схемы: defaults, `folders` CSV, границы, ошибки
+- `photo.controller.spec.ts` — моки сервисов, 200/404/500, лог unknown folders
 - `image.service.spec.ts` — интеграция с real fixtures (valid/corrupted)
+- фронт: `ApiClient` (folders query), `parseFolderIds`
 
 ### Фикстуры
 `src/back/tests/fixtures/` — `valid.jpg`, `corrupted.jpg`
@@ -180,9 +200,11 @@ npm run test:ui   # с UI
 ### Development
 ```bash
 npm run dev        # tsx watch (back) + vite (front) параллельно
-npm run dev:back   # только бэкенд
-npm run dev:front  # только фронтенд
+npm run dev:back   # только бэкенд (:3000), HTML не отдаёт
+npm run dev:front  # только фронтенд (:5173), proxy /api → :3000
 ```
+
+Страницу в split-dev открывайте на `http://127.0.0.1:5173/` (не на `:3000`).
 
 ### Production
 ```bash
@@ -223,8 +245,9 @@ environment:
 
 - Нет авто-обновления индекса (только рестарт)
 - Нет кэша ресайза (нагрузка на CPU при каждом запросе)
-- Форматы: только JPEG/PNG (HEIC, WebP, видео — позже)
-- Аутентификация/авторизация — нет (локальная сеть)
+- Форматы: JPEG/PNG/GIF/WebP (HEIC, видео — позже)
+- Аутентификация/авторизация — нет (локальная сеть / домен без ACL)
+- Каталог папок — только API; UI выбора папок нет (ссылки через `?folders=`)
 - Фронтенд: нет UI настроек, только query params
 
 ---
@@ -244,6 +267,9 @@ npx tsc --noEmit
 # Линт (если настроен)
 npm run lint
 
+# Каталог папок на проде
+curl -s https://photos.vzateych.uk/api/catalog/folders | jq
+
 # Запуск бэкенда с дебагом в VS Code
 # F5 → "Debug Backend (tsx)"
 ```
@@ -257,19 +283,20 @@ src/
 ├── back/
 │   ├── config/env.config.ts       # Zod config
 │   ├── controllers/photo.controller.ts
-│   ├── schemas/photo.schema.ts    # Zod API schemas
+│   ├── schemas/photo.schema.ts    # Zod API schemas (в т.ч. folders)
 │   ├── services/
-│   │   ├── scanner.service.ts     # FS scan
-│   │   ├── playlist.service.ts    # Shuffle, getNext, getById
+│   │   ├── scanner.service.ts     # FS scan: photos + folders
+│   │   ├── playlist.service.ts    # Scoped shuffle, catalog
 │   │   └── image.service.ts       # Sharp pipeline → Readable
 │   ├── types.ts                   # Interfaces (IPlayService, IImageProcessorService)
 │   ├── main.ts                    # Bootstrap, routes
 │   └── tests/                     # Unit tests
 └── front/
-    ├── main.ts                    # Entry
+    ├── main.ts                    # Entry, URL config
+    ├── config/folders.ts          # parseFolderIds
     ├── api/                       # ApiClient
-    ├── core/                      # SlideshowEngine, LayerManager
-    └── ui/                        # DOM helpers
+    ├── core/                      # SlideshowEngine, watchdog
+    └── ui/                        # LayerManager
 ```
 
 ---
