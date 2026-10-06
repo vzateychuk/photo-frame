@@ -17,29 +17,32 @@ describe('PhotoScannerService', () => {
     await fs.rm(rootDir, { recursive: true, force: true });
   });
 
-  it('should recursively find only jpeg and png files', async () => {
+  it('should recursively find jpeg, png and gif files', async () => {
     const subdir = path.join(rootDir, 'subdir');
     await fs.mkdir(subdir);
     await Promise.all([
       fs.writeFile(path.join(rootDir, 'photo1.jpg'), ''),
       fs.writeFile(path.join(rootDir, 'photo2.png'), ''),
+      fs.writeFile(path.join(rootDir, 'anim.gif'), ''),
       fs.writeFile(path.join(rootDir, 'notes.txt'), ''),
       fs.writeFile(path.join(subdir, 'photo3.jpeg'), ''),
       fs.writeFile(path.join(subdir, 'photo4.PNG'), ''),
+      fs.writeFile(path.join(subdir, 'photo5.GIF'), ''),
       fs.writeFile(path.join(subdir, 'readme.md'), ''),
     ]);
 
     const photos = await service.scan();
 
-    expect(photos).toHaveLength(4);
+    expect(photos).toHaveLength(6);
     const paths = photos.map(p => p.path);
     expect(paths).toContain(path.join(rootDir, 'photo1.jpg'));
     expect(paths).toContain(path.join(rootDir, 'photo2.png'));
+    expect(paths).toContain(path.join(rootDir, 'anim.gif'));
     expect(paths).toContain(path.join(subdir, 'photo3.jpeg'));
     expect(paths).toContain(path.join(subdir, 'photo4.PNG'));
+    expect(paths).toContain(path.join(subdir, 'photo5.GIF'));
     expect(paths).not.toContain(path.join(rootDir, 'notes.txt'));
     expect(paths).not.toContain(path.join(subdir, 'readme.md'));
-    // Проверяем, что у каждого фото есть id
     photos.forEach(p => {
       expect(p.id).toBeDefined();
       expect(typeof p.id).toBe('string');
