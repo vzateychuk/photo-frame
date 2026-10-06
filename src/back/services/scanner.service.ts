@@ -1,8 +1,7 @@
 import fs from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 import path from 'node:path';
-
-import { randomUUID } from 'crypto';
+import { createHash } from 'node:crypto';
 
 export interface PhotoItem {
   id: string;
@@ -29,11 +28,23 @@ export class PhotoScannerService {
       .map((entry) => {
         const fullPath = path.resolve(entry.parentPath, entry.name);
         return {
-          id: randomUUID(),
+          id: photoIdFromPath(fullPath),
           path: fullPath,
         };
       });
   }
+}
+
+/** Stable UUID-shaped id from absolute path (same path → same id across restarts). */
+export function photoIdFromPath(absolutePath: string): string {
+  const hash = createHash('sha256').update(absolutePath).digest('hex');
+  return [
+    hash.slice(0, 8),
+    hash.slice(8, 12),
+    hash.slice(12, 16),
+    hash.slice(16, 20),
+    hash.slice(20, 32),
+  ].join('-');
 }
 
 function isNotFoundError(error: unknown): boolean {

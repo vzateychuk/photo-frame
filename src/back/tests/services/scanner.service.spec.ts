@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { PhotoScannerService } from '../../services/scanner.service.js';
+import { PhotoScannerService, photoIdFromPath } from '../../services/scanner.service.js';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -48,10 +48,36 @@ describe('PhotoScannerService', () => {
     expect(paths).not.toContain(path.join(rootDir, 'notes.txt'));
     expect(paths).not.toContain(path.join(subdir, 'readme.md'));
     photos.forEach(p => {
-      expect(p.id).toBeDefined();
-      expect(typeof p.id).toBe('string');
-      expect(p.id.length).toBeGreaterThan(0);
+      expect(p.id).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      );
+      expect(p.id).toBe(photoIdFromPath(p.path));
     });
+  });
+
+  it('should assign the same id for the same path across scans', async () => {
+    await fs.writeFile(path.join(rootDir, 'stable.jpg'), 'same-bytes');
+
+    const first = await service.scan();
+    const second = await service.scan();
+
+    expect(first).toHaveLength(1);
+    expect(second).toHaveLength(1);
+    expect(first[0]!.id).toBe(second[0]!.id);
+    expect(first[0]!.id).toBe(photoIdFromPath(first[0]!.path));
+  });
+
+  it('should assign different ids for different paths', async () => {
+    await Promise.all([
+      fs.writeFile(path.join(rootDir, 'a.jpg'), 'same-bytes'),
+      fs.writeFile(path.join(rootDir, 'b.jpg'), 'same-bytes'),
+    ]);
+
+    const photos = await service.scan();
+    const ids = new Set(photos.map((p) => p.id));
+
+    expect(photos).toHaveLength(2);
+    expect(ids.size).toBe(2);
   });
 
   it('should handle empty directory', async () => {
@@ -69,5 +95,16 @@ describe('PhotoScannerService', () => {
     await fs.mkdir(path.join(rootDir, 'folder'));
     const photos = await service.scan();
     expect(photos).toEqual([]);
+  });
+});
+
+describe('photoIdFromPath', () => {
+  it('should return a deterministic UUID-shaped id', () => {
+    const id = photoIdFromPath('/data/photos/vacation/img.jpg');
+    expect(id).toBe(photoIdFromPath('/data/photos/vacation/img.jpg'));
+    expect(id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+    expect(id).not.toBe(photoIdFromPath('/data/photos/vacation/other.jpg'));
   });
 });
