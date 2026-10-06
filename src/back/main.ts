@@ -34,7 +34,7 @@ const bootstrap = async () => {
   const photos = await scanner.scan();
 
   if (photos.length === 0) {
-    server.log.warn(`В директории ${photosDir} не найдено фото (JPEG/PNG/GIF)`);
+    server.log.warn(`В директории ${photosDir} не найдено фото (JPEG/PNG/GIF/WebP)`);
   } else {
     server.log.info(`Найдено фото: ${photos.length}`);
   }
