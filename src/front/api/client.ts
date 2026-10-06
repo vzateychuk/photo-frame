@@ -5,6 +5,8 @@ export interface ApiClientConfig {
   intervalMs: number;
   screenWidth: number;
   screenHeight: number;
+  /** Ограничение карусели папками (рекурсивно). Без списка — весь архив. */
+  folderIds?: readonly string[];
   /** Переопределение настроек ky поверх дефолтов (для тестов). */
   httpOptions?: Options;
 }
@@ -14,6 +16,7 @@ export class ApiClient {
   private readonly intervalMs: number;
   private readonly screenWidth: number;
   private readonly screenHeight: number;
+  private readonly folderIds: readonly string[];
   private readonly http: KyInstance;
 
   static readonly REQUEST_TIMEOUT_MS = 10_000;
@@ -24,6 +27,7 @@ export class ApiClient {
     this.intervalMs = config.intervalMs;
     this.screenWidth = config.screenWidth;
     this.screenHeight = config.screenHeight;
+    this.folderIds = config.folderIds ?? [];
 
     // Повторы: сетевые ошибки, таймауты и 408/413/429/500/502/503/504
     // (дефолтный список ky). 404 «нет фото» не повторяется.
@@ -39,8 +43,13 @@ export class ApiClient {
   }
 
   async fetchNextPhotoId(signal?: AbortSignal): Promise<string> {
+    const searchParams =
+      this.folderIds.length > 0 ? { folders: this.folderIds.join(',') } : undefined;
     const data = await this.http
-      .get('api/play/next', signal ? { signal } : {})
+      .get('api/play/next', {
+        ...(signal ? { signal } : {}),
+        ...(searchParams ? { searchParams } : {}),
+      })
       .json<{ id?: unknown }>();
     if (typeof data?.id !== 'string' || data.id === '') {
       throw new Error('Invalid response: missing photo ID');

@@ -39,6 +39,30 @@ describe('ApiClient', () => {
       expect(request.method).toBe('GET');
     });
 
+    it('should append folders query when folderIds are configured', async () => {
+      fetchMock.mockResolvedValue(jsonResponse({ id: 'test-photo-123' }));
+
+      await expect(
+        createClient({ folderIds: ['folder-a', 'folder-b'] }).fetchNextPhotoId(),
+      ).resolves.toBe('test-photo-123');
+
+      const request = fetchMock.mock.calls[0][0] as Request;
+      expect(request.url).toBe(
+        'http://localhost:3000/api/play/next?folders=folder-a%2Cfolder-b',
+      );
+    });
+
+    it('should omit folders query when folderIds is empty', async () => {
+      fetchMock.mockResolvedValue(jsonResponse({ id: 'test-photo-123' }));
+
+      await expect(createClient({ folderIds: [] }).fetchNextPhotoId()).resolves.toBe(
+        'test-photo-123',
+      );
+
+      const request = fetchMock.mock.calls[0][0] as Request;
+      expect(request.url).toBe('http://localhost:3000/api/play/next');
+    });
+
     it('should retry on network error and succeed', async () => {
       fetchMock
         .mockRejectedValueOnce(new TypeError('Failed to fetch'))
