@@ -1,4 +1,8 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
+
+const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   root: '.',
@@ -8,6 +12,12 @@ export default defineConfig({
     emptyOutDir: true,
     modulePreload: {
       polyfill: false,
+    },
+    rollupOptions: {
+      input: {
+        main: path.resolve(rootDir, 'index.html'),
+        catalog: path.resolve(rootDir, 'catalog.html'),
+      },
     },
   },
   server: {

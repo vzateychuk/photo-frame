@@ -37,6 +37,20 @@ export const GetNextQuerySchema = z.object({
     }),
 });
 
+/**
+ * Query for GET /api/catalog/folders.
+ * Optional name substring: ?q=vacation
+ */
+export const ListFoldersQuerySchema = z.object({
+  q: z
+    .string()
+    .trim()
+    .min(1, 'q must not be empty')
+    .max(200)
+    .optional(),
+});
+
 export type GetPhotoQuery = z.infer<typeof GetPhotoQuerySchema>;
 export type GetPhotoParams = z.infer<typeof GetPhotoParamsSchema>;
 export type GetNextQuery = z.infer<typeof GetNextQuerySchema>;
+export type ListFoldersQuery = z.infer<typeof ListFoldersQuerySchema>;

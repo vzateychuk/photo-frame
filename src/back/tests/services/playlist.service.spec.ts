@@ -122,7 +122,7 @@ describe('PlaylistService', () => {
       });
     });
 
-    it('should list folders with recursive photo counts and without paths', () => {
+    it('should list folders with recursive photo counts, path labels, and without disk paths', () => {
       const folders = service.listFolders();
       expect(folders).toEqual(
         expect.arrayContaining([
@@ -130,18 +130,21 @@ describe('PlaylistService', () => {
             id: 'folder-vacation',
             name: 'vacation',
             parentId: null,
+            pathLabel: 'vacation',
             photoCount: 2,
           },
           {
             id: 'folder-day1',
             name: 'day1',
             parentId: 'folder-vacation',
+            pathLabel: 'vacation / day1',
             photoCount: 1,
           },
           {
             id: 'folder-work',
             name: 'work',
             parentId: null,
+            pathLabel: 'work',
             photoCount: 1,
           },
         ]),
@@ -149,6 +152,22 @@ describe('PlaylistService', () => {
       folders.forEach((folder) => {
         expect(folder).not.toHaveProperty('path');
       });
+    });
+
+    it('should filter folders by name substring without regard to case', () => {
+      expect(service.listFolders({ query: 'DAY' })).toEqual([
+        {
+          id: 'folder-day1',
+          name: 'day1',
+          parentId: 'folder-vacation',
+          pathLabel: 'vacation / day1',
+          photoCount: 1,
+        },
+      ]);
+    });
+
+    it('should return an empty list when no folder name matches the query', () => {
+      expect(service.listFolders({ query: 'missing' })).toEqual([]);
     });
   });
 });

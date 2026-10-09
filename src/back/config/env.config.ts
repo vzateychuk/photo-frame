@@ -13,6 +13,8 @@ const envSchema = z.object({
   // Путь к директории с фото строго обязателен, без него сервис не имеет смысла[cite: 1]
   PHOTOS_DIR: z.string().min(1, 'ОШИБКА: Переменная PHOTOS_DIR не задана'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+  /** Публичный адрес сайта для готовых ссылок на слайд-шоу. Необязателен. */
+  PUBLIC_BASE_URL: z.string().url().optional(),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);

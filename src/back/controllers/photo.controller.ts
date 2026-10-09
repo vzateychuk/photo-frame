@@ -3,8 +3,11 @@ import {
   GetNextQuerySchema,
   GetPhotoParamsSchema,
   GetPhotoQuerySchema,
+  ListFoldersQuerySchema,
 } from '../schemas/photo.schema.js';
+import { config } from '../config/env.config.js';
 import type { IPlayService, IImageProcessorService } from '../types.js';
+import { buildFolderSlideshowUrl } from '../utils/slideshow-url.js';
 import type { Readable } from 'node:stream';
 
 export class PhotoController {
@@ -44,13 +47,32 @@ export class PhotoController {
   };
 
   /**
-   * Список папок архива: id, имя, родитель, число фото (включая вложенные).
+   * Список папок архива: id, имя, путь из имён, родитель, число фото (включая вложенные).
+   * Опциональный query `q` — подстрока имени без учёта регистра.
    * Пути на диске не отдаются.
    */
-  public listFolders = async (_req: FastifyRequest, reply: FastifyReply): Promise<void> => {
+  public listFolders = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
-      reply.send({ folders: this.playService.listFolders() });
-    } catch {
+      const { q } = ListFoldersQuerySchema.parse(req.query);
+      const folders =
+        q === undefined
+          ? this.playService.listFolders()
+          : this.playService.listFolders({ query: q });
+      const publicBaseUrl = config.PUBLIC_BASE_URL;
+      reply.send({
+        folders:
+          publicBaseUrl === undefined
+            ? folders
+            : folders.map((folder) => ({
+                ...folder,
+                slideshowUrl: buildFolderSlideshowUrl(publicBaseUrl, folder.id),
+              })),
+      });
+    } catch (err) {
+      if (isZodError(err)) {
+        reply.status(400).send({ error: 'Invalid parameters', details: err.issues });
+        return;
+      }
       reply.status(500).send({ error: 'Internal server error' });
     }
   };

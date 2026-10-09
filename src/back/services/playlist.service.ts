@@ -2,6 +2,7 @@ import path from 'node:path';
 import type {
   FolderId,
   FolderItem,
+  ListFoldersOptions,
   PhotoItem,
   PlayNextResult,
   PublicFolder,
@@ -71,13 +72,37 @@ export class PlaylistService {
     return this.photos.find((p) => p.id === id) ?? null;
   }
 
-  listFolders(): PublicFolder[] {
-    return this.folders.map((folder) => ({
+  /**
+   * Публичный каталог папок без путей на диске.
+   * С `query` — только папки, в чьём имени есть подстрока (без учёта регистра);
+   * число фото считается только для отобранных папок.
+   */
+  listFolders(options?: ListFoldersOptions): PublicFolder[] {
+    const query = options?.query?.trim().toLowerCase();
+    const matched =
+      query === undefined || query === ''
+        ? this.folders
+        : this.folders.filter((folder) => folder.name.toLowerCase().includes(query));
+
+    return matched.map((folder) => ({
       id: folder.id,
       name: folder.name,
       parentId: folder.parentId,
+      pathLabel: this.folderPathLabel(folder),
       photoCount: this.photos.filter((photo) => isPathInside(folder.path, photo.path)).length,
     }));
+  }
+
+  private folderPathLabel(folder: FolderItem): string {
+    const parts: string[] = [folder.name];
+    let parentId = folder.parentId;
+    while (parentId !== null) {
+      const parent = this.folderById.get(parentId);
+      if (!parent) break;
+      parts.unshift(parent.name);
+      parentId = parent.parentId;
+    }
+    return parts.join(' / ');
   }
 
   private resolveScope(folderIds?: readonly FolderId[]): {

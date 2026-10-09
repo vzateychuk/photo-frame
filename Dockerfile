@@ -28,6 +28,9 @@ RUN npm ci --omit=dev
 # Copy compiled code from builder
 COPY --from=builder /app/dist ./dist
 
+# Время сборки образа (UTC) — отдаётся в GET /health как builtAt
+RUN date -u +%Y-%m-%dT%H:%M:%SZ > /app/BUILT_AT
+
 # Use non-root user (exists in node:20-alpine)
 USER node
 

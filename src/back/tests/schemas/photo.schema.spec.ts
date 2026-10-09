@@ -3,6 +3,7 @@ import {
   GetPhotoQuerySchema,
   GetPhotoParamsSchema,
   GetNextQuerySchema,
+  ListFoldersQuerySchema,
 } from '../../schemas/photo.schema.js';
 
 describe('Photo API Schemas', () => {
@@ -79,6 +80,20 @@ describe('Photo API Schemas', () => {
     it('should reject empty folders value', () => {
       expect(() => GetNextQuerySchema.parse({ folders: '' })).toThrow();
       expect(() => GetNextQuerySchema.parse({ folders: ' , ,' })).toThrow();
+    });
+  });
+
+  describe('ListFoldersQuerySchema', () => {
+    it('should allow missing q', () => {
+      expect(ListFoldersQuerySchema.parse({})).toEqual({ q: undefined });
+    });
+
+    it('should trim q', () => {
+      expect(ListFoldersQuerySchema.parse({ q: '  day  ' })).toEqual({ q: 'day' });
+    });
+
+    it('should reject empty q after trim', () => {
+      expect(() => ListFoldersQuerySchema.parse({ q: '   ' })).toThrow();
     });
   });
 });

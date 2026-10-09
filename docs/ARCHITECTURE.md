@@ -43,6 +43,7 @@ EnvSchema = z.object({
   HOST: z.string().default('0.0.0.0'),
   PHOTOS_DIR: z.string().min(1),           // обязателен
   LOG_LEVEL: z.enum([...]).default('info'),
+  PUBLIC_BASE_URL: z.string().url().optional(), // для готовых ссылок в каталоге
 });
 ```
 
@@ -90,8 +91,11 @@ Pipeline Sharp:
 - Неизвестные folder id → `req.log.warn`, показ из оставшихся папок
 
 **`GET /api/catalog/folders`**
-- `playService.listFolders()` → `{ folders: [{ id, name, parentId, photoCount }] }`
-- `photoCount` включает вложенные папки; пути на диск не отдаются
+- Query: опциональный `q` — подстрока имени папки без учёта регистра (`ListFoldersQuerySchema`)
+- `playService.listFolders({ query })` → `{ folders: [{ id, name, parentId, pathLabel, photoCount }] }`
+- `pathLabel` — цепочка имён от корня архива (`vacation / day1`); пути на диск не отдаются
+- `photoCount` включает вложенные папки; при `q` считается только для отобранных папок
+- если задан `PUBLIC_BASE_URL` — у каждой папки ещё `slideshowUrl` (готовая ссылка `/?folders=<id>`)
 
 **`GET /api/photos/:id`**
 1. Валидация: `GetPhotoParamsSchema` (id), `GetPhotoQuerySchema` (w, h)
@@ -119,15 +123,19 @@ server.get('/api/photos/:id', photoController.getPhoto);
 ```
 
 ### `GET /api/catalog/folders`
+**Query (optional):** `q=vacation` — подстрока имени без учёта регистра.
+
 **Response 200:**
 ```json
 {
   "folders": [
-    { "id": "...", "name": "vacation", "parentId": null, "photoCount": 12 },
-    { "id": "...", "name": "day1", "parentId": "<parent-id>", "photoCount": 4 }
+    { "id": "...", "name": "vacation", "parentId": null, "pathLabel": "vacation", "photoCount": 12 },
+    { "id": "...", "name": "day1", "parentId": "<parent-id>", "pathLabel": "vacation / day1", "photoCount": 4 }
   ]
 }
 ```
+
+**Response 400:** пустой или слишком длинный `q`
 
 ### `GET /api/play/next`
 **Query (optional):** `folders=id1,id2` — CSV идентификаторов папок.
@@ -247,8 +255,8 @@ environment:
 - Нет кэша ресайза (нагрузка на CPU при каждом запросе)
 - Форматы: JPEG/PNG/GIF/WebP (HEIC, видео — позже)
 - Аутентификация/авторизация — нет (локальная сеть / домен без ACL). Спроектирован доступ по коду, см. раздел 11
-- Каталог папок — только API; UI выбора папок нет (ссылки через `?folders=`)
-- Фронтенд: нет UI настроек, только query params
+- Каталог папок: API + отдельная страница `catalog.html` (поиск по имени, копирование ссылки `?folders=`)
+- Фронтенд слайд-шоу: нет UI настроек, только query params
 
 ---
 
@@ -267,8 +275,11 @@ npx tsc --noEmit
 # Линт (если настроен)
 npm run lint
 
-# Каталог папок на проде
-curl -s https://photos.vzateych.uk/api/catalog/folders | jq
+# Поиск папок по части имени (без полного каталога)
+curl -s 'https://photos.vzateych.uk/api/catalog/folders?q=vacation' | jq
+
+# Страница каталога (production)
+# https://photos.vzateych.uk/catalog.html
 
 # Запуск бэкенда с дебагом в VS Code
 # F5 → "Debug Backend (tsx)"
@@ -292,7 +303,8 @@ src/
 │   ├── main.ts                    # Bootstrap, routes
 │   └── tests/                     # Unit tests
 └── front/
-    ├── main.ts                    # Entry, URL config
+    ├── main.ts                    # Entry слайд-шоу, URL config
+    ├── catalog/                   # Страница каталога (catalog.html)
     ├── config/folders.ts          # parseFolderIds
     ├── api/                       # ApiClient
     ├── core/                      # SlideshowEngine, watchdog
@@ -316,7 +328,7 @@ src/
 
 ### 11.2 Код доступа
 
-- 8 символов из алфавита `0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ`. Единственное преобразование при проверке — перевод букв в верхний регистр; пробелы и дефисы не отбрасываются. Показывается как `K7MQ2XAB`.
+- 8 символов печатного ASCII (коды 32–126). Регистр важен; введённое значение не меняют (нет `toUpperCase`, нет удаления пробелов или дефисов). Пример: `k7mq2Xab`.
 - В коде доступ называется ключом: тип `AccessKey`, хранилище `KeyStore`, папка `src/back/keystore/`, параметр ссылки `?key=`. На экране для зрителя — «код».
 - Запись `AccessKey`: `key`, `label`, `folders` (`"all"` или непустой список id папок), `createdAt`, `expiresAt | null`.
 - Срок действия задаётся для каждого кода отдельно; `null` — бессрочно. После `expiresAt` код недействителен.
@@ -357,7 +369,7 @@ src/
 
 ### 11.7 Развёртывание
 
-- `docker-compose.yml`: `"<адрес-Pi>:3001:3001"`, том `./state:/data/state` (запись разрешена, владелец — пользователь контейнера). Публикация `"3000:3000"` на этом этапе не меняется.
+- `docker-compose.yml`: `"<адрес-Pi>:3001:3001"`, том `./data/state:/data/state` (запись разрешена, владелец — пользователь контейнера). Публикация `"3000:3000"` на этом этапе не меняется.
 - Новые переменные: `ADMIN_PORT`, `ADMIN_HOST`, `ADMIN_TOKEN`, `PUBLIC_BASE_URL`, `KEYSTORE_FILE`.
 - Отдельный этап после внедрения: `"127.0.0.1:3000:3000"`, Nginx обращается к приложению по `127.0.0.1:3000`, не по `localhost`. Сначала меняется Nginx, потом привязка порта (пошагово — в концепции, раздел 4.7).
 

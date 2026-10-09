@@ -25,6 +25,6 @@
     /* Environment */
     "types": ["node"]
   },
-  "include": ["src/**/*"],
+  "include": ["src/back/**/*"],
   "exclude": ["node_modules", "dist", "src/**/*.spec.ts", "src/**/*.test.ts"]
 }

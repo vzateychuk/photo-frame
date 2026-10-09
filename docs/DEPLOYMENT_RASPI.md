@@ -22,18 +22,24 @@
 ```bash
 cd /path/to/photo-frame
 
-# Сборка под Raspberry Pi 4/5 (arm64)
-podman build --platform linux/arm64 -t photo-frame:raspi .
+# Сборка под Raspberry Pi 4/5 (arm64).
+# Тег docker.io/library/… нужен, чтобы после docker load на Pi
+# имя совпало с image: photo-frame:raspi в docker-compose.yml
+# (иначе Podman сохраняет localhost/photo-frame:raspi, и Compose
+# продолжает поднимать старый photo-frame:raspi).
+podman build --platform linux/arm64 -t docker.io/library/photo-frame:raspi .
 
 # Экспорт в docker-compatible tar (чтобы на Pi принял docker load)
-podman save --format docker-archive -o photo-frame-raspi.tar photo-frame:raspi
+rm -f photo-frame-raspi.tar
+podman save --format docker-archive -o photo-frame-raspi.tar docker.io/library/photo-frame:raspi
 ```
 
 Эквивалент через `buildx` (у Podman это обёртка над Buildah; отдельный `buildx create` не нужен):
 
 ```bash
-podman buildx build --platform linux/arm64 -t photo-frame:raspi .
-podman save --format docker-archive -o photo-frame-raspi.tar photo-frame:raspi
+podman buildx build --platform linux/arm64 -t docker.io/library/photo-frame:raspi .
+rm -f photo-frame-raspi.tar
+podman save --format docker-archive -o photo-frame-raspi.tar docker.io/library/photo-frame:raspi
 ```
 
 Для Pi 3 (32-bit ARM) вместо `linux/arm64` используйте `linux/arm/v7`.
@@ -56,15 +62,17 @@ sudo podman run --rm --privileged multiarch/qemu-user-static --reset -p yes
 Скопируйте образ и `docker-compose.yml` (исходники на Pi не нужны):
 
 ```bash
-scp photo-frame-raspi.tar docker-compose.yml user@pi-host:~/photo-frame/
+scp photo-frame-raspi.tar docker-compose.yml vez@raspi.local:~/photoframe/
 ```
 
 На Pi загрузите образ в Docker:
 
 ```bash
-cd ~/photo-frame
+cd ~/photoframe
 docker load -i photo-frame-raspi.tar
 docker image ls | grep photo-frame
+# Если видите localhost/photo-frame:raspi, а photo-frame:raspi — старый:
+docker tag localhost/photo-frame:raspi photo-frame:raspi
 ```
 
 ### Шаг 3: Настройка окружения
@@ -94,14 +102,66 @@ docker compose up -d --no-build
 
 ### Обновление уже задеплоенной версии
 
-На ПК: шаг 1 (`podman build` + `podman save`).  
-На Pi: шаг 2 (`docker load`) и снова:
+На ПК: шаг 1 (`podman build` + `podman save` + `scp`).  
+На Pi:
 
 ```bash
-docker compose up -d --no-build
+cd ~/photoframe
+docker load -i photo-frame-raspi.tar
+docker tag localhost/photo-frame:raspi photo-frame:raspi   # если load дал тег localhost/…
+docker compose up -d --force-recreate --no-build
+curl -s http://localhost:3000/health
 ```
 
-Compose подхватит новый образ с тем же тегом `photo-frame:raspi`.
+`--force-recreate` обязателен: иначе может остаться контейнер со старым слоем образа.
+
+### Важно: два тега образа после `docker load` (подтверждено на Pi)
+
+Podman при сборке/сохранении часто даёт имя `localhost/photo-frame:raspi`.  
+`docker load` на Pi создаёт именно этот тег.  
+В `docker-compose.yml` указано `image: photo-frame:raspi` — **другое имя**.
+
+Если на Pi уже был старый `photo-frame:raspi`, Compose после `up` продолжает
+брать его, даже когда новый образ уже загружен как `localhost/photo-frame:raspi`.
+Снаружи кажется, что деплой прошёл, а в контейнере — файлы старой даты
+(без `catalog.html`, старый `builtAt`).
+
+Проверка:
+
+```bash
+docker image ls | grep photo-frame
+# типичная картина после load из Podman-архива:
+# localhost/photo-frame   raspi   <новый id>
+# photo-frame             raspi   <старый id>   ← его и берёт Compose
+```
+
+Исправление (обязательный шаг, пока load даёт `localhost/…`):
+
+```bash
+docker tag localhost/photo-frame:raspi photo-frame:raspi
+docker compose up -d --force-recreate --no-build
+```
+
+Убедиться, что поднялся новый образ:
+
+```bash
+docker exec photoframe ls -la /app/dist/public/
+# ожидается catalog.html с датой свежей сборки
+
+curl -s http://localhost:3000/health
+# ожидается "builtAt":"<время сборки нового образа>"
+
+curl -I http://localhost:3000/catalog.html
+# ожидается HTTP/1.1 200 OK
+```
+
+Порядок на обновлении: сначала `docker load`, потом `docker tag`, потом
+`docker compose up -d --force-recreate --no-build`.  
+Если сделать `up` до `load`/`tag` — поднимется старое.
+
+Предупреждение Compose про устаревший атрибут `version` в `docker-compose.yml`
+означает, что на Pi лежит старая копия compose-файла; актуальный файл в репозитории
+уже без `version` — скопируйте его вместе с образом при следующем деплое.
 
 ## 3. Инфраструктурные настройки
 
@@ -150,7 +210,10 @@ server {
 
 ## 4. Чек-лист проверки
 
+- [ ] `docker image ls | grep photo-frame` — у `photo-frame:raspi` тот же IMAGE ID, что у свежего `localhost/photo-frame:raspi` (после `docker tag`), не старый id.
 - [ ] `docker ps` показывает статус **Up** для контейнера `photoframe`.
-- [ ] `curl -I http://localhost:3000/health` возвращает `200 OK`.
-- [ ] Домен `http://vez.vzateych.uk` открывает интерфейс слайд-шоу.
+- [ ] `docker exec photoframe ls /app/dist/public/` содержит `catalog.html` с датой свежей сборки.
+- [ ] `curl -s http://localhost:3000/health` — `builtAt` совпадает со временем новой сборки (например `2026-10-09T23:16:35Z`).
+- [ ] `curl -I http://localhost:3000/catalog.html` возвращает `200 OK`.
+- [ ] Домен открывает слайд-шоу; `/catalog.html` — страницу каталога.
 - [ ] Попытка создать файл в `/data/photos` внутри контейнера завершается ошибкой `Read-only file system`.

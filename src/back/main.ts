@@ -3,6 +3,7 @@ import path from 'node:path';
 import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { config } from './config/env.config.js';
+import { getReleaseInfo } from './config/release-info.js';
 import { PhotoScannerService } from './services/scanner.service.js';
 import { PlaylistService } from './services/playlist.service.js';
 import { ImageProcessorService } from './services/image.service.js';
@@ -46,9 +47,16 @@ const bootstrap = async () => {
   const imageProcessor = new ImageProcessorService();
   const photoController = new PhotoController(playlistService, imageProcessor);
 
+  const release = getReleaseInfo();
+
   // 3. Регистрируем роуты
   server.get('/health', async () => {
-    return { status: 'ok', timestamp: new Date().toISOString() };
+    return {
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      version: release.version,
+      builtAt: release.builtAt,
+    };
   });
 
   // API для плейлиста (опциональный ?folders=id1,id2)

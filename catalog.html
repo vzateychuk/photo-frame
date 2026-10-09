@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Photo Frame — каталог</title>
+  <style>
+    :root {
+      --bg: #141414;
+      --surface: #1e1e1e;
+      --border: #333;
+      --text: #f0f0f0;
+      --muted: #9a9a9a;
+      --accent: #c4a35a;
+      --accent-text: #1a1408;
+      --ok: #6fbf73;
+      --danger: #d97a7a;
+      --font: "IBM Plex Sans", "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(ellipse at top, #222 0%, var(--bg) 55%);
+      color: var(--text);
+      font-family: var(--font);
+      line-height: 1.45;
+    }
+    main {
+      max-width: 42rem;
+      margin: 0 auto;
+      padding: 2rem 1.25rem 3rem;
+    }
+    h1 {
+      margin: 0 0 0.35rem;
+      font-size: 1.5rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    .lead {
+      margin: 0 0 1.5rem;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+    label[for="folder-query"] {
+      display: block;
+      margin-bottom: 0.4rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    input[type="search"] {
+      width: 100%;
+      padding: 0.75rem 0.9rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+      font: inherit;
+      font-size: 1rem;
+    }
+    input[type="search"]:focus {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+      border-color: var(--accent);
+    }
+    .status {
+      min-height: 1.4rem;
+      margin: 0.75rem 0 1rem;
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+    .status.error { color: var(--danger); }
+    .status.ok { color: var(--ok); }
+    .selection {
+      margin-bottom: 1.25rem;
+      padding: 1rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+    }
+    .selection-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem 1rem;
+      margin-bottom: 0.75rem;
+    }
+    .selection-count {
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+    .selection-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    #selection-list {
+      list-style: none;
+      margin: 0 0 0.75rem;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .selection-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      padding: 0.35rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.9rem;
+    }
+    .selection-item:last-child { border-bottom: none; }
+    .selection-path { word-break: break-word; }
+    #results {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+    .folder-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 0.85rem 1rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .folder-row:hover { border-color: #555; }
+    .folder-row.selected {
+      border-color: var(--accent);
+      background: #242018;
+    }
+    .folder-row input[type="checkbox"] {
+      margin-top: 0.25rem;
+      width: 1.05rem;
+      height: 1.05rem;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+    .folder-meta {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .folder-path {
+      font-weight: 500;
+      word-break: break-word;
+    }
+    .folder-count {
+      margin-top: 0.2rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    button {
+      padding: 0.5rem 0.85rem;
+      border: none;
+      border-radius: 6px;
+      background: var(--accent);
+      color: var(--accent-text);
+      font: inherit;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover:not(:disabled) { filter: brightness(1.08); }
+    button:active:not(:disabled) { transform: translateY(1px); }
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    button.ghost {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      font-weight: 500;
+    }
+    .url-preview {
+      margin: 0;
+      padding: 0.55rem 0.65rem;
+      border-radius: 4px;
+      background: #0f0f0f;
+      color: var(--muted);
+      font-family: ui-monospace, "Cascadia Code", monospace;
+      font-size: 0.78rem;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Каталог</h1>
+    <p class="lead">
+      Найдите папки по названию, отметьте нужные и скопируйте одну ссылку сразу на несколько папок.
+    </p>
+    <label for="folder-query">Название или часть названия</label>
+    <input
+      id="folder-query"
+      type="search"
+      autocomplete="off"
+      spellcheck="false"
+      placeholder="например: vacation или day"
+    />
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+
+    <section id="selection" class="selection" aria-label="Выбранные папки">
+      <div class="selection-header">
+        <span id="selection-count" class="selection-count"></span>
+        <div class="selection-actions">
+          <button id="clear-selection" type="button" class="ghost">Очистить</button>
+          <button id="copy-link" type="button">Скопировать ссылку</button>
+        </div>
+      </div>
+      <ul id="selection-list"></ul>
+      <p id="url-preview" class="url-preview"></p>
+    </section>
+
+    <ul id="results"></ul>
+  </main>
+  <script type="module" src="/src/front/catalog/main.ts"></script>
+</body>
+</html>

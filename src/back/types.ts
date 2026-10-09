@@ -23,7 +23,14 @@ export interface PublicFolder {
   readonly id: FolderId;
   readonly name: string;
   readonly parentId: FolderId | null;
+  /** Имена от корня архива до этой папки, через « / ». */
+  readonly pathLabel: string;
   readonly photoCount: number;
+}
+
+export interface ListFoldersOptions {
+  /** Подстрока имени папки без учёта регистра. */
+  readonly query?: string;
 }
 
 export interface PlayNextResult {
@@ -34,7 +41,7 @@ export interface PlayNextResult {
 export interface IPlayService {
   getNext(folderIds?: readonly FolderId[]): PlayNextResult;
   getById(id: PhotoId): PhotoItem | null;
-  listFolders(): PublicFolder[];
+  listFolders(options?: ListFoldersOptions): PublicFolder[];
 }
 
 export interface IImageProcessorService {

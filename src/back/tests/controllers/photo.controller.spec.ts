@@ -135,13 +135,31 @@ describe('PhotoController', () => {
   describe('listFolders', () => {
     it('should return public folder list', async () => {
       const folders = [
-        { id: 'f1', name: 'vacation', parentId: null, photoCount: 2 },
+        {
+          id: 'f1',
+          name: 'vacation',
+          parentId: null,
+          pathLabel: 'vacation',
+          photoCount: 2,
+        },
       ];
+      mockRequest.query = {};
       mockPlayService.listFolders.mockReturnValue(folders);
 
       await controller.listFolders(mockRequest as never, mockReply as never);
 
+      expect(mockPlayService.listFolders).toHaveBeenCalledWith();
       expect(mockReply.send).toHaveBeenCalledWith({ folders });
+    });
+
+    it('should pass name query to the play service', async () => {
+      mockRequest.query = { q: 'day' };
+      mockPlayService.listFolders.mockReturnValue([]);
+
+      await controller.listFolders(mockRequest as never, mockReply as never);
+
+      expect(mockPlayService.listFolders).toHaveBeenCalledWith({ query: 'day' });
+      expect(mockReply.send).toHaveBeenCalledWith({ folders: [] });
     });
   });
 
