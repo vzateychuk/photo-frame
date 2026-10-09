@@ -1,0 +1,11 @@
+# Исключения из RAG-индексации Continue
+node_modules/
+.git/
+dist/
+build/
+target/
+.venv/
+venv/
+*.log
+*.lock
+package-lock.json
