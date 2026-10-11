@@ -39,28 +39,32 @@ describe('ApiClient', () => {
       expect(request.method).toBe('GET');
     });
 
-    it('should append folders query when folderIds are configured', async () => {
+    it('should append key query when accessKey is configured', async () => {
       fetchMock.mockResolvedValue(jsonResponse({ id: 'test-photo-123' }));
 
       await expect(
-        createClient({ folderIds: ['folder-a', 'folder-b'] }).fetchNextPhotoId(),
+        createClient({ accessKey: 'AAAAAAAA' }).fetchNextPhotoId(),
       ).resolves.toBe('test-photo-123');
 
       const request = fetchMock.mock.calls[0][0] as Request;
-      expect(request.url).toBe(
-        'http://localhost:3000/api/play/next?folders=folder-a%2Cfolder-b',
-      );
+      expect(request.url).toBe('http://localhost:3000/api/play/next?key=AAAAAAAA');
     });
 
-    it('should omit folders query when folderIds is empty', async () => {
+    it('should omit key query when accessKey is missing', async () => {
       fetchMock.mockResolvedValue(jsonResponse({ id: 'test-photo-123' }));
 
-      await expect(createClient({ folderIds: [] }).fetchNextPhotoId()).resolves.toBe(
-        'test-photo-123',
-      );
+      await expect(createClient().fetchNextPhotoId()).resolves.toBe('test-photo-123');
 
       const request = fetchMock.mock.calls[0][0] as Request;
       expect(request.url).toBe('http://localhost:3000/api/play/next');
+    });
+
+    it('should throw AccessDeniedError on 401', async () => {
+      fetchMock.mockResolvedValue(jsonResponse({ error: 'access_denied' }, 401));
+      const { AccessDeniedError } = await import('../../api/access-denied-error.js');
+      await expect(createClient({ accessKey: 'AAAAAAAA' }).fetchNextPhotoId()).rejects.toBeInstanceOf(
+        AccessDeniedError,
+      );
     });
 
     it('should retry on network error and succeed', async () => {
@@ -145,6 +149,11 @@ describe('ApiClient', () => {
     it('should build URL with custom dimensions', () => {
       const url = createClient({ screenWidth: 1280, screenHeight: 720 }).buildImageUrl('photo-123');
       expect(url.toString()).toBe('http://localhost:3000/api/photos/photo-123?w=1280&h=720');
+    });
+
+    it('should include access key in image URL', () => {
+      const url = createClient({ accessKey: 'AAAAAAAA' }).buildImageUrl('photo-123');
+      expect(url.searchParams.get('key')).toBe('AAAAAAAA');
     });
   });
 });

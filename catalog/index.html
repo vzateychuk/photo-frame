@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <title>Photo Frame — каталог и коды</title>
+  <style>
+    :root {
+      --bg: #141414;
+      --surface: #1e1e1e;
+      --border: #333;
+      --text: #f0f0f0;
+      --muted: #9a9a9a;
+      --accent: #c4a35a;
+      --accent-text: #1a1408;
+      --ok: #6fbf73;
+      --danger: #d97a7a;
+      --font: "IBM Plex Sans", "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(ellipse at top, #222 0%, var(--bg) 55%);
+      color: var(--text);
+      font-family: var(--font);
+      line-height: 1.45;
+    }
+    main { max-width: 44rem; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
+    h1 { margin: 0 0 0.35rem; font-size: 1.5rem; font-weight: 600; }
+    h2 { margin: 1.75rem 0 0.75rem; font-size: 1.1rem; font-weight: 600; }
+    .lead { margin: 0 0 1.25rem; color: var(--muted); font-size: 0.95rem; }
+    label { display: block; margin: 0.6rem 0 0.35rem; font-size: 0.85rem; color: var(--muted); }
+    input[type="search"], input[type="text"], input[type="password"], input[type="number"] {
+      width: 100%;
+      padding: 0.7rem 0.85rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+      font: inherit;
+    }
+    input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .status { min-height: 1.3rem; margin: 0.6rem 0; font-size: 0.9rem; color: var(--muted); }
+    .status.error { color: var(--danger); }
+    .status.ok { color: var(--ok); }
+    .panel {
+      margin: 1rem 0;
+      padding: 1rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+    }
+    .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+    button {
+      padding: 0.5rem 0.85rem;
+      border: none;
+      border-radius: 6px;
+      background: var(--accent);
+      color: var(--accent-text);
+      font: inherit;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button.ghost {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      font-weight: 500;
+    }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    ul { list-style: none; margin: 0; padding: 0; }
+    .folder-row, .key-row {
+      display: flex;
+      gap: 0.75rem;
+      align-items: flex-start;
+      padding: 0.65rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .folder-path, .key-label { font-weight: 500; word-break: break-word; }
+    .muted { color: var(--muted); font-size: 0.85rem; }
+    .url-preview {
+      margin: 0.5rem 0 0;
+      padding: 0.55rem 0.65rem;
+      border-radius: 4px;
+      background: #0f0f0f;
+      color: var(--muted);
+      font-family: ui-monospace, monospace;
+      font-size: 0.78rem;
+      word-break: break-all;
+    }
+    #admin-app[hidden], #token-gate[hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Каталог и коды</h1>
+    <p class="lead">Введите токен администратора, выберите папки и создайте ссылку с кодом доступа.</p>
+
+    <section id="token-gate" class="panel">
+      <label for="admin-token">ADMIN_TOKEN</label>
+      <input id="admin-token" type="password" autocomplete="off" spellcheck="false" />
+      <div class="row" style="margin-top:0.75rem;">
+        <button id="save-token" type="button">Сохранить токен</button>
+      </div>
+      <p id="token-status" class="status" role="status"></p>
+    </section>
+
+    <div id="admin-app" hidden>
+      <div class="row">
+        <button id="clear-token" type="button" class="ghost">Сменить токен</button>
+      </div>
+
+      <h2>Новый код</h2>
+      <div class="panel">
+        <label for="key-label">Подпись</label>
+        <input id="key-label" type="text" placeholder="например: Мама" />
+        <label for="ttl-hours">Срок в часах (пусто = бессрочно)</label>
+        <input id="ttl-hours" type="number" min="1" step="1" placeholder="24" />
+        <label for="folder-query">Папки (поиск)</label>
+        <input id="folder-query" type="search" placeholder="часть названия" autocomplete="off" />
+        <p id="search-status" class="status" role="status"></p>
+        <ul id="folder-results"></ul>
+        <p id="selection-summary" class="muted">Выбрано: 0 · весь архив, если ничего не выбрано</p>
+        <div class="row" style="margin-top:0.75rem;">
+          <button id="create-key" type="button">Создать код и скопировать ссылку</button>
+          <button id="use-all" type="button" class="ghost">Весь архив</button>
+        </div>
+        <p id="create-status" class="status" role="status"></p>
+        <p id="created-url" class="url-preview" hidden></p>
+      </div>
+
+      <h2>Выданные коды</h2>
+      <div class="panel">
+        <button id="refresh-keys" type="button" class="ghost">Обновить</button>
+        <p id="keys-status" class="status" role="status"></p>
+        <ul id="keys-list"></ul>
+      </div>
+    </div>
+  </main>
+  <script type="module" src="/src/front/catalog/admin-main.ts"></script>
+</body>
+</html>

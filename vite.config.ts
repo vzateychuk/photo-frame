@@ -16,7 +16,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: path.resolve(rootDir, 'index.html'),
-        catalog: path.resolve(rootDir, 'catalog.html'),
+        catalogAdmin: path.resolve(rootDir, 'catalog/index.html'),
       },
     },
   },
@@ -35,6 +35,22 @@ export default defineConfig({
       },
     },
   },
+  plugins: [
+    {
+      name: 'catalog-route-without-trailing-slash',
+      configureServer(server) {
+        // Vite otherwise maps /catalog to the root slideshow index.html.
+        // Desired: / → slideshow, /catalog → catalog page (slash optional).
+        server.middlewares.use((req, _res, next) => {
+          const url = req.url ?? '';
+          if (url === '/catalog' || url.startsWith('/catalog?')) {
+            req.url = `/catalog/${url.slice('/catalog'.length)}`;
+          }
+          next();
+        });
+      },
+    },
+  ],
   resolve: {
     alias: {
       '@': '/src/front',

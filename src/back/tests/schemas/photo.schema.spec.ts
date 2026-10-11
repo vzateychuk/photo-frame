@@ -61,25 +61,18 @@ describe('Photo API Schemas', () => {
   });
 
   describe('GetNextQuerySchema', () => {
-    it('should allow missing folders', () => {
-      expect(GetNextQuerySchema.parse({})).toEqual({ folders: undefined });
+    it('should allow missing key (access check happens in the controller)', () => {
+      expect(GetNextQuerySchema.parse({})).toEqual({ key: undefined });
     });
 
-    it('should normalize a single folder id to an array', () => {
-      expect(GetNextQuerySchema.parse({ folders: 'folder-1' })).toEqual({
-        folders: ['folder-1'],
+    it('should pass through a key value', () => {
+      expect(GetNextQuerySchema.parse({ key: 'k7mq2Xab' })).toEqual({ key: 'k7mq2Xab' });
+    });
+
+    it('should ignore guest folders (no longer part of the contract)', () => {
+      expect(GetNextQuerySchema.parse({ key: 'k7mq2Xab', folders: 'a,b' })).toEqual({
+        key: 'k7mq2Xab',
       });
-    });
-
-    it('should split comma-separated folder ids', () => {
-      expect(GetNextQuerySchema.parse({ folders: 'a,b, c' })).toEqual({
-        folders: ['a', 'b', 'c'],
-      });
-    });
-
-    it('should reject empty folders value', () => {
-      expect(() => GetNextQuerySchema.parse({ folders: '' })).toThrow();
-      expect(() => GetNextQuerySchema.parse({ folders: ' , ,' })).toThrow();
     });
   });
 

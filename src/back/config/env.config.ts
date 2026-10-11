@@ -2,31 +2,42 @@
 import { z } from 'zod';
 import dotenv from 'dotenv';
 
-// Загружаем переменные из .env файла в process.env
-dotenv.config();
+// Load env variables only when parsing via loadConfig
+// No side‑effects on import
 
-const envSchema = z.object({
+export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  // z.coerce автоматически приведет строку из env к числу
+  // z.coerce automatically turns env string into number
   PORT: z.coerce.number().int().min(1024).max(65535).default(3000),
-  HOST: z.string().default('0.0.0.0'), // 0.0.0.0 для доступа в локальной сети
-  // Путь к директории с фото строго обязателен, без него сервис не имеет смысла[cite: 1]
-  PHOTOS_DIR: z.string().min(1, 'ОШИБКА: Переменная PHOTOS_DIR не задана'),
+  HOST: z.string().default('0.0.0.0'), // 0.0.0.0 for local network access
+  // Path to photo directory is mandatory
+  PHOTOS_DIR: z.string().min(1, 'ERROR: PHOTOS_DIR is required'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
-  /** Публичный адрес сайта для готовых ссылок на слайд-шоу. Необязателен. */
+  /** Public base URL for prepared slideshow links. Optional. */
   PUBLIC_BASE_URL: z.string().url().optional(),
+  /** Path to the key‑store JSON file. Mandatory, default provided. */
+  KEYSTORE_FILE: z.string().default('/data/state/keystore.json'),
+  /** Secret token for admin endpoints. Optional, min 32 chars. */
+  ADMIN_TOKEN: z.string().min(32).optional(),
 });
 
-const parsedEnv = envSchema.safeParse(process.env);
-
-if (!parsedEnv.success) {
-  console.error('❌ Критическая ошибка инициализации: Невалидные переменные окружения');
-  console.error(JSON.stringify(parsedEnv.error.format(), null, 2));
-  process.exit(1); // Fail-Fast: роняем процесс до старта сервера
-}
-
-// Экспортируем только валидированную и типизированную конфигурацию
-export const config: AppConfig = parsedEnv.data;
-
-// Экспортируем тип для потенциального использования в DI контейнере
 export type AppConfig = z.infer<typeof envSchema>;
+
+export const loadConfig = (): AppConfig => {
+  // Load .env if present. Tests set process.env explicitly; skip .env so
+  // intentional deletes (e.g. ADMIN_TOKEN) are not overwritten.
+  if (process.env.NODE_ENV !== 'test') {
+    dotenv.config();
+  }
+  const parsed = envSchema.safeParse(process.env);
+  if (!parsed.success) {
+    console.error('❌ Critical init error: Invalid environment variables');
+    console.error(JSON.stringify(parsed.error.format(), null, 2));
+    process.exit(1);
+  }
+  return parsed.data;
+};
+
+// Export a dummy config for tests that only need the schema
+// No exported default config
+

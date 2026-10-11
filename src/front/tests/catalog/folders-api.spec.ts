@@ -1,50 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import {
-  buildFolderSlideshowUrl,
-  resolveSlideshowBaseUrl,
-  searchFolders,
-} from '../../catalog/folders-api.js';
-
-describe('buildFolderSlideshowUrl', () => {
-  it('builds a slideshow URL with one folder id', () => {
-    expect(buildFolderSlideshowUrl('https://photos.example.com', ['folder-abc'])).toBe(
-      'https://photos.example.com/?folders=folder-abc',
-    );
-  });
-
-  it('joins several folder ids with commas', () => {
-    expect(
-      buildFolderSlideshowUrl('https://photos.example.com/', ['id-1', 'id-2']),
-    ).toBe('https://photos.example.com/?folders=id-1%2Cid-2');
-  });
-
-  it('rejects an empty folder id list', () => {
-    expect(() => buildFolderSlideshowUrl('https://photos.example.com', [])).toThrow();
-  });
-});
-
-describe('resolveSlideshowBaseUrl', () => {
-  it('prefers origin from a server slideshowUrl', () => {
-    expect(
-      resolveSlideshowBaseUrl('http://localhost:5173', [
-        {
-          id: 'f1',
-          name: 'day1',
-          parentId: null,
-          pathLabel: 'day1',
-          photoCount: 1,
-          slideshowUrl: 'https://photos.example.com/?folders=f1',
-        },
-      ]),
-    ).toBe('https://photos.example.com');
-  });
-
-  it('falls back to the page origin', () => {
-    expect(resolveSlideshowBaseUrl('http://localhost:5173/', [])).toBe(
-      'http://localhost:5173',
-    );
-  });
-});
+import { searchFolders } from '../../catalog/folders-api.js';
 
 describe('searchFolders', () => {
   afterEach(() => {
@@ -55,11 +10,13 @@ describe('searchFolders', () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(searchFolders('http://localhost:3000', '   ')).resolves.toEqual([]);
+    await expect(
+      searchFolders('http://localhost:3000', '   ', { adminToken: 'a'.repeat(32) }),
+    ).resolves.toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('requests catalog folders with q and maps the response', async () => {
+  it('requests /api/catalog with q and Authorization', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -70,20 +27,24 @@ describe('searchFolders', () => {
             parentId: 'f0',
             pathLabel: 'vacation / day1',
             photoCount: 4,
-            slideshowUrl: 'https://photos.example.com/?folders=f1',
           },
         ],
       }),
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const folders = await searchFolders('http://localhost:3000/', 'day');
+    const folders = await searchFolders('http://localhost:3000/', 'day', {
+      adminToken: 'a'.repeat(32),
+    });
 
     const [requestUrl, requestInit] = fetchMock.mock.calls[0]!;
-    expect(String(requestUrl)).toBe('http://localhost:3000/api/catalog/folders?q=day');
+    expect(String(requestUrl)).toBe('http://localhost:3000/api/catalog?q=day');
     expect(requestInit).toEqual(
       expect.objectContaining({
-        headers: { Accept: 'application/json' },
+        headers: expect.objectContaining({
+          Accept: 'application/json',
+          Authorization: `Bearer ${'a'.repeat(32)}`,
+        }),
       }),
     );
     expect(folders).toEqual([
@@ -93,7 +54,6 @@ describe('searchFolders', () => {
         parentId: 'f0',
         pathLabel: 'vacation / day1',
         photoCount: 4,
-        slideshowUrl: 'https://photos.example.com/?folders=f1',
       },
     ]);
   });

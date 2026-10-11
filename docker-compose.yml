@@ -4,16 +4,20 @@ services:
     container_name: photoframe
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      # Bind to loopback only (step 12). Nginx on the host must proxy to 127.0.0.1:3000.
+      - "127.0.0.1:3000:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
       - HOST=0.0.0.0
       - PHOTOS_DIR=/data/photos
       - LOG_LEVEL=info
+      - KEYSTORE_FILE=/data/state/keystore.json
+      - ADMIN_TOKEN=${ADMIN_TOKEN}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
     volumes:
-      # Путь на хосте берется из HOST_PHOTOS_DIR (обязательно) или fallback
       - ${HOST_PHOTOS_DIR}:/data/photos:ro
+      - ./data/state:/data/state
     logging:
       driver: "json-file"
       options:

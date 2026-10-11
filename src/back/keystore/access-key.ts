@@ -1,7 +1,9 @@
 import crypto from 'crypto';
 
 
-const KEY_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+// Printable ASCII characters from 33 to 126 inclusive (no space). dtype: string
+const KEY_ALPHABET = Array.from({ length: 94 }, (_, i) => String.fromCharCode(33 + i)).join('');
+// Fixed key length
 const KEY_LENGTH = 8;
 
 export { KEY_ALPHABET, KEY_LENGTH };
@@ -15,48 +17,33 @@ export { KEY_ALPHABET, KEY_LENGTH };
 export const generateKey = (
   exists: (key: string) => boolean
 ): string => {
-  let key = '';
-
   while (true) {
-    // Сбрасываем строку перед генерацией нового ключа
-    key = '';
-
+    let key = '';
     for (let i = 0; i < KEY_LENGTH; i++) {
-      const randomValue = crypto.randomInt(KEY_ALPHABET.length);
-      key += KEY_ALPHABET[randomValue];
+      const idx = crypto.randomInt(KEY_ALPHABET.length);
+      key += KEY_ALPHABET[idx];
     }
-
     if (!exists(key)) {
       return key;
     }
   }
 };
 
-
 /**
- * Нормализует ключ, убирая заглавные буквы.
- * Проверяет длину и наличие допустимых символов.
- * Возвращает null при отсутствии корректного ключа.
+ * Нормализует ключ: удаляет ведущие/завершающие пробелы,
+ * проверяет наличие только допустимых символов из KEY_ALPHABET
+ * и ровную длину. Пробел внутри считается недопустимым.
+ * При входном значении преобразует к строке.
  */
-export const normalizeKey = (input: string): string | null => {
-  if (!input || input.length === 0) {
+export const normalizeKey = (input: unknown): string | null => {
+  const str = String(input).trim();
+  if (str.length !== KEY_LENGTH) {
     return null;
   }
-
-  const upperStr = input.toUpperCase();
-
-  // Проверяем все символы из KEY_ALPHABET
-  for (let i = 0; i < upperStr.length; i++) {
-    const character = upperStr.charAt(i);
-    if (KEY_ALPHABET.indexOf(character) === -1) {
-      return null;
-    }
+  // Переводим строку в массив символов
+  for (const ch of str) {
+    if (ch === ' ') return null; // внутренняя пробел
+    if (KEY_ALPHABET.indexOf(ch) === -1) return null;
   }
-
-  // Длина не должна отличаться от KEY_LENGTH
-  if (upperStr.length !== KEY_LENGTH) {
-    return null;
-  }
-
-  return upperStr;
+  return str;
 };

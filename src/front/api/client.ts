@@ -1,12 +1,13 @@
-import ky, { type KyInstance, type Options } from 'ky';
+import ky, { HTTPError, type KyInstance, type Options } from 'ky';
+import { AccessDeniedError } from './access-denied-error.js';
 
 export interface ApiClientConfig {
   baseUrl: string;
   intervalMs: number;
   screenWidth: number;
   screenHeight: number;
-  /** Ограничение карусели папками (рекурсивно). Без списка — весь архив. */
-  folderIds?: readonly string[];
+  /** Guest access key for play/photos. */
+  accessKey?: string | null;
   /** Переопределение настроек ky поверх дефолтов (для тестов). */
   httpOptions?: Options;
 }
@@ -16,7 +17,7 @@ export class ApiClient {
   private readonly intervalMs: number;
   private readonly screenWidth: number;
   private readonly screenHeight: number;
-  private readonly folderIds: readonly string[];
+  private readonly accessKey: string | null;
   private readonly http: KyInstance;
 
   static readonly REQUEST_TIMEOUT_MS = 10_000;
@@ -27,11 +28,8 @@ export class ApiClient {
     this.intervalMs = config.intervalMs;
     this.screenWidth = config.screenWidth;
     this.screenHeight = config.screenHeight;
-    this.folderIds = config.folderIds ?? [];
+    this.accessKey = config.accessKey ?? null;
 
-    // Повторы: сетевые ошибки, таймауты и 408/413/429/500/502/503/504
-    // (дефолтный список ky). 404 «нет фото» не повторяется.
-    // Долгую недоступность сервера обрабатывает SlideshowEngine.
     this.http = ky
       .create({
         baseUrl: `${this.baseUrl}/`,
@@ -44,17 +42,27 @@ export class ApiClient {
 
   async fetchNextPhotoId(signal?: AbortSignal): Promise<string> {
     const searchParams =
-      this.folderIds.length > 0 ? { folders: this.folderIds.join(',') } : undefined;
-    const data = await this.http
-      .get('api/play/next', {
-        ...(signal ? { signal } : {}),
-        ...(searchParams ? { searchParams } : {}),
-      })
-      .json<{ id?: unknown }>();
-    if (typeof data?.id !== 'string' || data.id === '') {
-      throw new Error('Invalid response: missing photo ID');
+      this.accessKey !== null && this.accessKey !== ''
+        ? { key: this.accessKey }
+        : undefined;
+
+    try {
+      const data = await this.http
+        .get('api/play/next', {
+          ...(signal ? { signal } : {}),
+          ...(searchParams ? { searchParams } : {}),
+        })
+        .json<{ id?: unknown }>();
+      if (typeof data?.id !== 'string' || data.id === '') {
+        throw new Error('Invalid response: missing photo ID');
+      }
+      return data.id;
+    } catch (err) {
+      if (err instanceof HTTPError && err.response.status === 401) {
+        throw new AccessDeniedError();
+      }
+      throw err;
     }
-    return data.id;
   }
 
   /**
@@ -64,6 +72,9 @@ export class ApiClient {
     const url = new URL(`${this.baseUrl}/api/photos/${encodeURIComponent(photoId)}`);
     url.searchParams.set('w', this.screenWidth.toString());
     url.searchParams.set('h', this.screenHeight.toString());
+    if (this.accessKey !== null && this.accessKey !== '') {
+      url.searchParams.set('key', this.accessKey);
+    }
     return url;
   }
 

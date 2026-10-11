@@ -2,19 +2,12 @@ import { ApiClient } from './api/client.js';
 import { LayerManager } from './ui/layer-manager.js';
 import { SlideshowEngine } from './core/engine.js';
 import { startWatchdog } from './core/watchdog.js';
-import { parseFolderIds } from './config/folders.js';
+import { clearKey, resolveKey, saveKey } from './config/access-key.js';
 
-/**
- * Парсит параметры URL для конфигурации.
- * Размер экрана по умолчанию — физические пиксели (CSS × devicePixelRatio),
- * как требует концепт для TV с DPR>1. ?w=&h= остаются ручным оверрайдом.
- * ?folders=id1,id2 — необязательный фильтр папок для карусели.
- */
 function getConfigFromUrl(): {
   intervalMs: number;
   screenWidth: number;
   screenHeight: number;
-  folderIds: string[];
 } {
   const params = new URLSearchParams(window.location.search);
   const intervalMs = Math.max(1000, Number(params.get('interval')) || 5000);
@@ -23,14 +16,13 @@ function getConfigFromUrl(): {
   const physicalHeight = Math.round(screen.height * dpr);
   const screenWidth = Math.max(100, Math.min(3840, Number(params.get('w')) || physicalWidth));
   const screenHeight = Math.max(100, Math.min(2160, Number(params.get('h')) || physicalHeight));
-  const folderIds = parseFolderIds(params.get('folders'));
-  return { intervalMs, screenWidth, screenHeight, folderIds };
+  return { intervalMs, screenWidth, screenHeight };
 }
 
-/**
- * Создает DOM структуру для слайд-шоу.
- */
-function createSlideshowDOM(): { layerA: HTMLImageElement; layerB: HTMLImageElement; container: HTMLDivElement } {
+function createSlideshowDOM(): {
+  layerA: HTMLImageElement;
+  layerB: HTMLImageElement;
+} {
   const container = document.createElement('div');
   container.id = 'slideshow-container';
   container.style.cssText = `
@@ -58,34 +50,78 @@ function createSlideshowDOM(): { layerA: HTMLImageElement; layerB: HTMLImageElem
   });
 
   document.body.appendChild(container);
-  return { layerA, layerB, container };
+  return { layerA, layerB };
 }
 
-/**
- * Запрашивает Wake Lock для предотвращения засыпания экрана.
- */
-async function requestWakeLock(): Promise<WakeLockSentinel | null> {
+function showCodePrompt(onSubmit: (code: string) => void, message?: string): void {
+  document.getElementById('code-prompt')?.remove();
+
+  const panel = document.createElement('div');
+  panel.id = 'code-prompt';
+  panel.style.cssText = `
+    position: fixed; inset: 0; z-index: 20;
+    display: flex; align-items: center; justify-content: center;
+    background: #000; color: #fff; font-family: system-ui, sans-serif;
+  `;
+  panel.innerHTML = `
+    <form id="code-form" style="display:flex;flex-direction:column;gap:0.75rem;width:min(20rem,90vw);">
+      <p style="margin:0;color:#ccc;text-align:center;"></p>
+      <input id="code-input" name="code" autocomplete="off" spellcheck="false"
+        style="padding:0.75rem;font-size:1.1rem;border-radius:6px;border:1px solid #444;background:#111;color:#fff;"
+        placeholder="код доступа" />
+      <button type="submit"
+        style="padding:0.7rem;border:none;border-radius:6px;background:#c4a35a;color:#1a1408;font-weight:600;cursor:pointer;">
+        Открыть
+      </button>
+    </form>
+  `;
+  document.body.appendChild(panel);
+
+  const form = panel.querySelector('#code-form');
+  const input = panel.querySelector('#code-input');
+  const msg = panel.querySelector('p');
+  if (
+    !(form instanceof HTMLFormElement) ||
+    !(input instanceof HTMLInputElement) ||
+    !(msg instanceof HTMLParagraphElement)
+  ) {
+    return;
+  }
+  msg.textContent = message ?? 'Введите код';
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const value = input.value.trim();
+    if (value.length === 0) return;
+    panel.remove();
+    onSubmit(value);
+  });
+  input.focus();
+}
+
+function navigateWithKey(code: string): void {
+  const url = new URL(window.location.href);
+  url.searchParams.set('key', code);
+  window.location.href = url.toString();
+}
+
+async function requestWakeLock(): Promise<void> {
   if ('wakeLock' in navigator) {
     try {
-      const sentinel = await (navigator as any).wakeLock.request('screen');
-      console.log('[Wake Lock] Acquired');
-      sentinel.addEventListener('release', () => console.log('[Wake Lock] Released'));
-      return sentinel;
-    } catch (err) {
-      console.warn('[Wake Lock] Failed:', err);
+      await (
+        navigator as Navigator & {
+          wakeLock: { request: (type: 'screen') => Promise<unknown> };
+        }
+      ).wakeLock.request('screen');
+    } catch {
+      /* ignore */
     }
   }
-  return null;
 }
 
-/**
- * Точка входа фронтенда.
- */
-async function main(): Promise<void> {
-  const { intervalMs, screenWidth, screenHeight, folderIds } = getConfigFromUrl();
+function startSlideshow(accessKey: string): void {
+  const { intervalMs, screenWidth, screenHeight } = getConfigFromUrl();
   const { layerA, layerB } = createSlideshowDOM();
-
-  // Базовый URL бэкенда — текущий origin
   const baseUrl = window.location.origin;
 
   const apiClient = new ApiClient({
@@ -93,41 +129,50 @@ async function main(): Promise<void> {
     intervalMs,
     screenWidth,
     screenHeight,
-    folderIds,
+    accessKey,
   });
   const layerManager = new LayerManager(layerA, layerB);
-  // Единственный экземпляр на страницу: элементы управления (Старт/Стоп)
-  // должны получать эту ссылку, а не создавать новый движок.
-  const engine = new SlideshowEngine(apiClient, layerManager, intervalMs);
+  const engine = new SlideshowEngine(apiClient, layerManager, intervalMs, {
+    onAccessDenied: () => {
+      clearKey();
+      showCodePrompt(
+        navigateWithKey,
+        'Код недействителен. Попросите новый у владельца',
+      );
+    },
+  });
 
-  // Wake Lock (best effort)
-  await requestWakeLock();
+  void requestWakeLock();
 
-  // Полноэкранный режим по двойному клику (опционально)
   document.addEventListener('dblclick', async () => {
     if (!document.fullscreenElement) {
       try {
         await document.documentElement.requestFullscreen();
-      } catch (err) {
-        console.warn('[Fullscreen] Failed:', err);
+      } catch {
+        /* ignore */
       }
     }
   });
 
-  // Запуск
-  console.log('[PhotoFrame] Starting slideshow', {
-    intervalMs,
-    screenWidth,
-    screenHeight,
-    folderIds,
-  });
+  saveKey(accessKey);
   void engine.start();
   startWatchdog(engine, { baseUrl });
 }
 
-// Запуск при готовности DOM
+async function main(): Promise<void> {
+  const key = resolveKey();
+  if (key === null || key === '') {
+    showCodePrompt(navigateWithKey);
+    return;
+  }
+
+  startSlideshow(key);
+}
+
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', main);
+  document.addEventListener('DOMContentLoaded', () => {
+    void main();
+  });
 } else {
-  main();
+  void main();
 }

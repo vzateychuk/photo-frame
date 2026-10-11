@@ -151,6 +151,15 @@ export class LayerManager {
     }
   }
 
+  /** Clears both image layers (used on access denied). */
+  clearImages(): void {
+    this.cancelPendingPreload?.(new DOMException('Cleared', 'AbortError'));
+    this.layerA.removeAttribute('src');
+    this.layerB.removeAttribute('src');
+    this.layerA.style.opacity = '0';
+    this.layerB.style.opacity = '0';
+  }
+
   /**
    * Возвращает текущий активный слой (для тестов/отладки).
    */
