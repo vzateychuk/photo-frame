@@ -1,4 +1,5 @@
 import { ApiClient } from '../api/client.js';
+import { AccessDeniedError } from '../api/access-denied-error.js';
 import { LayerManager } from '../ui/layer-manager.js';
 
 interface Run {
@@ -10,6 +11,7 @@ export class SlideshowEngine {
   private readonly apiClient: ApiClient;
   private readonly layerManager: LayerManager;
   private readonly intervalMs: number;
+  private readonly onAccessDenied?: () => void;
   private currentRun: Run | null = null;
   private lastProgressAt = 0;
 
@@ -21,10 +23,16 @@ export class SlideshowEngine {
   static BACKOFF_BASE_MS = 10_000;
   static BACKOFF_MAX_MS = 5 * 60_000;
 
-  constructor(apiClient: ApiClient, layerManager: LayerManager, intervalMs: number) {
+  constructor(
+    apiClient: ApiClient,
+    layerManager: LayerManager,
+    intervalMs: number,
+    options?: { onAccessDenied?: () => void },
+  ) {
     this.apiClient = apiClient;
     this.layerManager = layerManager;
     this.intervalMs = intervalMs;
+    this.onAccessDenied = options?.onAccessDenied;
   }
 
   /**
@@ -128,6 +136,16 @@ export class SlideshowEngine {
         await this.sleep(this.intervalMs, signal);
       } catch (error) {
         if (signal.aborted) break;
+
+        if (error instanceof AccessDeniedError) {
+          this.layerManager.clearImages();
+          this.layerManager.showMessage(
+            'Код недействителен. Попросите новый у владельца',
+          );
+          this.onAccessDenied?.();
+          this.stop();
+          break;
+        }
 
         consecutiveFailures += 1;
         if (consecutiveFailures < SlideshowEngine.MAX_CONSECUTIVE_FAILURES) continue;

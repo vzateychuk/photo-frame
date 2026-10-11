@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 export const GetPhotoQuerySchema = z.object({
+  key: z.any().optional(),
   w: z.coerce.number().int().min(100).max(3840).default(1920),
   h: z.coerce.number().int().min(100).max(2160).default(1080),
 });
@@ -11,34 +12,14 @@ export const GetPhotoParamsSchema = z.object({
 
 /**
  * Query for GET /api/play/next.
- * Optional comma-separated folder ids: ?folders=id1,id2,id3
+ * Access is gated by `key`; guest `folders` filter is no longer accepted.
  */
 export const GetNextQuerySchema = z.object({
-  folders: z
-    .string()
-    .min(1)
-    .optional()
-    .transform((value): string[] | undefined => {
-      if (value === undefined) return undefined;
-      const ids = value
-        .split(',')
-        .map((part) => part.trim())
-        .filter((part) => part.length > 0);
-      if (ids.length === 0) {
-        throw new z.ZodError([
-          {
-            code: 'custom',
-            path: ['folders'],
-            message: 'folders must contain at least one id',
-          },
-        ]);
-      }
-      return ids;
-    }),
+  key: z.any().optional(),
 });
 
 /**
- * Query for GET /api/catalog/folders.
+ * Query for GET /api/catalog.
  * Optional name substring: ?q=vacation
  */
 export const ListFoldersQuerySchema = z.object({
@@ -50,7 +31,17 @@ export const ListFoldersQuerySchema = z.object({
     .optional(),
 });
 
+export const CreateKeyBodySchema = z.object({
+  label: z.string(),
+  folders: z.union([
+    z.literal('all'),
+    z.array(z.string()).min(1, 'folders must contain at least one id'),
+  ]),
+  ttlHours: z.number().int().positive().optional(),
+});
+
 export type GetPhotoQuery = z.infer<typeof GetPhotoQuerySchema>;
 export type GetPhotoParams = z.infer<typeof GetPhotoParamsSchema>;
 export type GetNextQuery = z.infer<typeof GetNextQuerySchema>;
 export type ListFoldersQuery = z.infer<typeof ListFoldersQuerySchema>;
+export type CreateKeyBody = z.infer<typeof CreateKeyBodySchema>;

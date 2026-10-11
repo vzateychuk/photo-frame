@@ -1,6 +1,6 @@
 # Photo Frame MVP
 
-Веб-фоторамка для Raspberry Pi. Показывает случайные фотографии из локальной папки в браузере TV-приставки.
+Веб-фоторамка для Raspberry Pi. Показывает случайные фотографии из локальной папки в браузере TV-приставки. Гостевой доступ — по коду (`?key=`).
 
 ## Стек
 - **Backend**: Node.js, Fastify, TypeScript, Zod (валидация конфига), Sharp (обработка фото).
@@ -10,14 +10,15 @@
 
 1. **Настройка окружения**:
    Скопируйте `.env.example` в `.env` и укажите путь к папке с фотографиями.
-   Для защищённого каталога (`GET /api/catalog`) задайте `ADMIN_TOKEN` (не короче 32 символов).
-   Без `ADMIN_TOKEN` сервер стартует, но маршрут `/api/catalog` не регистрируется (ответ 404).
+   Для управления каталогом и кодами задайте `ADMIN_TOKEN` (не короче 32 символов).
+   Без `ADMIN_TOKEN` сервер стартует, но `/api/catalog`, `/api/keys` и страница `/catalog` не регистрируются / недоступны для управления (маршруты API — 404).
    ```env
    PHOTOS_DIR=/path/to/your/photos
    PORT=3000
    HOST=0.0.0.0
    NODE_ENV=development
    ADMIN_TOKEN=replace-with-at-least-32-characters
+   PUBLIC_BASE_URL=https://photos.example.com
    ```
 
 2. **Установка зависимостей**:
@@ -41,66 +42,39 @@
 
 | Метод | Путь | Описание |
 |-------|------|----------|
-| `GET` | `/health` | Здоровье сервиса; `version` (из package.json) и `builtAt` (время сборки образа) |
-| `GET` | `/api/catalog/folders` | Список папок (`id`, имя, `pathLabel`, родитель, число фото); опционально `?q=` — подстрока имени (открытый) |
-| `GET` | `/api/catalog` | Тот же список папок; нужен `Authorization: Bearer <ADMIN_TOKEN>`. Без `ADMIN_TOKEN` в окружении маршрут не регистрируется (404) |
-| `GET` | `/api/play/next` | ID следующего фото; опционально `?folders=id1,id2` |
-| `GET` | `/api/photos/:id?w=1920&h=1080` | Бинарный JPEG стрим с ресайзом |
+| `GET` | `/health` | Здоровье сервиса; `version` и `builtAt` |
+| `GET` | `/api/catalog` | Список папок (`?q=`); нужен `Authorization: Bearer <ADMIN_TOKEN>` |
+| `GET` | `/api/keys` | Список ключей доступа (ADMIN_TOKEN) |
+| `POST` | `/api/keys` | Создать ключ: `{ label, folders: "all" \| string[], ttlHours? }` (ADMIN_TOKEN) |
+| `DELETE` | `/api/keys/:key` | Отозвать ключ (ADMIN_TOKEN) |
+| `GET` | `/api/play/next?key=` | ID следующего фото; нужен действующий ключ |
+| `GET` | `/api/photos/:id?key=&w=&h=` | JPEG стрим; нужен ключ; `Cache-Control: private` |
 
-### Параметры `/api/play/next`
-- Без `folders` — весь архив (как раньше).
-- `folders=id1,id2` — только указанные папки и все их подпапки; дубликаты фото убираются.
-- Неизвестный id в списке пропускается (в лог пишется предупреждение); если после фильтра фото нет — `404`.
+Без верного ключа `play/next` и `photos` отвечают `401 { "error": "access_denied" }`.
 
 ### Параметры `/api/photos/:id`
+- `key` — код доступа
 - `w` — ширина (100–3840, default 1920)
 - `h` — высота (100–2160, default 1080)
 
-## Фильтр по папкам
+## Гостевое слайд-шоу
 
-ID папки стабилен между перезапусками (хеш абсолютного пути), пока папку не переименовали и не сменился `PHOTOS_DIR`.
+Ссылка вида `https://photos.example.com/?key=K7MQ-2Xa`.  
+Без кода страница показывает поле «Введите код». Неверный/истёкший код — сообщение и остановка показа.
 
-### Страница каталога
+## Страница управления `/catalog`
 
-Отдельная страница (не слайд-шоу): поиск папок по названию, выбор нескольких и копирование одной ссылки `?folders=id1,id2`.
+- Development: `http://127.0.0.1:5173/catalog`
+- Production: `https://photos.vzateych.uk/catalog`
 
-- В development: `http://127.0.0.1:5173/catalog.html` (Vite проксирует `/api` на бэкенд).
-- В production: `https://photos.vzateych.uk/catalog.html`
+Ввод `ADMIN_TOKEN` (sessionStorage), поиск папок, создание/отзыв кодов, копирование ссылки `/?key=...`.
 
-### Вручную через API
-
-1. Найти папки по части имени (без полного каталога):
-   ```bash
-   curl -s 'https://photos.vzateych.uk/api/catalog/folders?q=vacation' | jq
-   ```
-2. Открыть слайд-шоу только из выбранных папок:
-   ```text
-   https://photos.vzateych.uk/?folders=<folderId>
-   https://photos.vzateych.uk/?folders=<id1>,<id2>
-   ```
-
-В development при раздельном запуске слайд-шоу открывайте на Vite (`http://127.0.0.1:5173/`): бэкенд на `:3000` в `development` HTML не отдаёт. Vite проксирует `/api` на бэкенд.
-
-## Просмотр фото по идентификатору
-
-ID фото стабилен между перезапусками: это UUID-подобная строка из SHA-256 **абсолютного пути** файла на стороне сервера (например `/data/photos/vacation/img.jpg` в контейнере).
-
-1. Получить id (из плейлиста или заранее известный):
-   ```bash
-   curl http://localhost:3000/api/play/next
-   # → {"id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890"}
-   ```
-
-2. Открыть JPEG по этому id — путь обязательно с префиксом `/api/photos/`:
-   ```text
-   http://localhost:3000/api/photos/<id>?w=1920&h=1080
-   ```
-   Снаружи (через nginx / Cloudflare) — тот же путь на вашем домене, например:
-   ```text
-   https://photos.vzateych.uk/api/photos/<id>?w=1920&h=1080
-   ```
-
-Фото отдаётся только если оно есть в текущем индексе (скан при старте приложения).
+```bash
+export ADMIN_TOKEN='…'
+curl -s -H "Authorization: Bearer $ADMIN_TOKEN" 'http://127.0.0.1:3000/api/catalog?q=vacation' | jq
+curl -s -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"label":"Mom","folders":"all"}' http://127.0.0.1:3000/api/keys | jq
+```
 
 ## Переменные окружения
 
@@ -108,12 +82,15 @@ ID фото стабилен между перезапусками: это UUID-
 |------------|----------|-------------|---------|
 | `NODE_ENV` | `development` \| `production` \| `test` | Нет | `development` |
 | `PORT` | Порт сервера | Нет | `3000` |
-| `HOST` | Бинд адрес | Нет | `0.0.0.0` |
+| `HOST` | Бинд адрес внутри контейнера | Нет | `0.0.0.0` |
 | `PHOTOS_DIR` | Путь к папке с фото | **Да** | — |
 | `LOG_LEVEL` | Уровень логов pino | Нет | `info` |
-| `PUBLIC_BASE_URL` | Публичный адрес сайта для готовых ссылок в каталоге (например `https://photos.vzateych.uk`) | Нет | — |
-| `KEYSTORE_FILE` | Путь к JSON-хранилищу ключей доступа | Нет | `/data/state/keystore.json` |
-| `ADMIN_TOKEN` | Секрет для `/api/catalog` (и позже `/api/keys`, `/catalog`), не короче 32 символов. Без него сервер стартует, но эти маршруты не регистрируются | Нет* | — |
+| `PUBLIC_BASE_URL` | База для готовых ссылок с `?key=` | Нет | — |
+| `KEYSTORE_FILE` | JSON-хранилище ключей | Нет | `/data/state/keystore.json` |
+| `ADMIN_TOKEN` | Секрет управления (мин. 32). Без него админ-маршруты не регистрируются | Нет* | — |
 
-\*Для локальной проверки защищённого каталога `ADMIN_TOKEN` нужно задать и перезапустить сервер.
+\*Для локальной проверки `/catalog` и `/api/catalog` токен нужно задать и перезапустить сервер.
 
+## Docker
+
+См. [docs/DEPLOYMENT_RASPI.md](docs/DEPLOYMENT_RASPI.md). Порт на хосте привязан к `127.0.0.1:3000` (доступ снаружи — через Nginx). Том `./data/state` — для `keystore.json`.

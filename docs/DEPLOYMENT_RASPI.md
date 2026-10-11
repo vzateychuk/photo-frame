@@ -89,7 +89,16 @@ docker tag localhost/photo-frame:raspi photo-frame:raspi
    ```
 3. Создайте файл `.env` рядом с `docker-compose.yml`:
    ```bash
-   echo "HOST_PHOTOS_DIR=$HOST_PHOTOS_DIR" > .env
+   cat > .env <<EOF
+   HOST_PHOTOS_DIR=$HOST_PHOTOS_DIR
+   # Min 32 chars. Without it /api/catalog and /api/keys are not registered.
+   ADMIN_TOKEN=replace-with-at-least-32-characters-here
+   PUBLIC_BASE_URL=https://photos.vzateych.uk
+   EOF
+   ```
+   Создайте на хосте каталог состояния (права на запись у пользователя контейнера `node`):
+   ```bash
+   mkdir -p ./data/state
    ```
 
 ### Шаг 4: Запуск контейнера (на Pi, Docker)
@@ -110,7 +119,7 @@ cd ~/photoframe
 docker load -i photo-frame-raspi.tar
 docker tag localhost/photo-frame:raspi photo-frame:raspi   # если load дал тег localhost/…
 docker compose up -d --force-recreate --no-build
-curl -s http://localhost:3000/health
+curl -s http://127.0.0.1:3000/health
 ```
 
 `--force-recreate` обязателен: иначе может остаться контейнер со старым слоем образа.
@@ -124,7 +133,7 @@ Podman при сборке/сохранении часто даёт имя `loca
 Если на Pi уже был старый `photo-frame:raspi`, Compose после `up` продолжает
 брать его, даже когда новый образ уже загружен как `localhost/photo-frame:raspi`.
 Снаружи кажется, что деплой прошёл, а в контейнере — файлы старой даты
-(без `catalog.html`, старый `builtAt`).
+(старый `builtAt`, нет `catalog/index.html`).
 
 Проверка:
 
@@ -146,13 +155,27 @@ docker compose up -d --force-recreate --no-build
 
 ```bash
 docker exec photoframe ls -la /app/dist/public/
-# ожидается catalog.html с датой свежей сборки
+# ожидается catalog/index.html с датой свежей сборки
 
-curl -s http://localhost:3000/health
+curl -s http://127.0.0.1:3000/health
 # ожидается "builtAt":"<время сборки нового образа>"
 
-curl -I http://localhost:3000/catalog.html
+curl -I http://127.0.0.1:3000/catalog/
 # ожидается HTTP/1.1 200 OK
+```
+
+### Порт только на loopback (127.0.0.1)
+
+В `docker-compose.yml` порт опубликован как `"127.0.0.1:3000:3000"`.
+С другого компьютера в домашней сети порт 3000 недоступен; снаружи сайт идёт через Nginx и туннель.
+
+Перед сменой привязки порта убедитесь, что Nginx проксирует на `http://127.0.0.1:3000`,
+а не на `http://localhost:3000` (имя `localhost` может стать IPv6 `::1`).
+
+```bash
+# на Pi
+grep -rn "proxy_pass" /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
 ```
 
 Порядок на обновлении: сначала `docker load`, потом `docker tag`, потом
@@ -180,7 +203,7 @@ curl -I http://localhost:3000/catalog.html
 
 **Основные параметры настройки:**
 - **Порт прослушивания**: 8082 (согласно сетевой конфигурации).
-- **Бэкенд**: `http://localhost:3000`.
+- **Бэкенд**: `http://127.0.0.1:3000` (не `localhost` — при привязке Docker только к IPv4 loopback).
 - **Оптимизация**: `proxy_buffering off` отключает буферизацию, чтобы изображения передавались потоком без задержек.
 
 Пример конфигурации виртуального хоста:
@@ -192,7 +215,7 @@ server {
     server_name vez.vzateych.uk;
 
     location / {
-        proxy_pass http://localhost:3000;
+        proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
 
         proxy_set_header Upgrade $http_upgrade;
@@ -212,8 +235,10 @@ server {
 
 - [ ] `docker image ls | grep photo-frame` — у `photo-frame:raspi` тот же IMAGE ID, что у свежего `localhost/photo-frame:raspi` (после `docker tag`), не старый id.
 - [ ] `docker ps` показывает статус **Up** для контейнера `photoframe`.
-- [ ] `docker exec photoframe ls /app/dist/public/` содержит `catalog.html` с датой свежей сборки.
-- [ ] `curl -s http://localhost:3000/health` — `builtAt` совпадает со временем новой сборки (например `2026-10-09T23:16:35Z`).
-- [ ] `curl -I http://localhost:3000/catalog.html` возвращает `200 OK`.
-- [ ] Домен открывает слайд-шоу; `/catalog.html` — страницу каталога.
+- [ ] `docker exec photoframe ls /app/dist/public/catalog/` содержит `index.html` с датой свежей сборки.
+- [ ] `curl -s http://127.0.0.1:3000/health` — `builtAt` совпадает со временем новой сборки.
+- [ ] `curl -I http://127.0.0.1:3000/catalog/` возвращает `200`.
+- [ ] Без `ADMIN_TOKEN` в `.env` — `GET /api/catalog` даёт 404; с токеном — 401 без заголовка и 200 с Bearer.
+- [ ] `sudo ss -tlnp | grep ':3000'` показывает только `127.0.0.1:3000`.
+- [ ] Домен открывает слайд-шоу; `/catalog/` — страницу каталога (нужен `ADMIN_TOKEN` в браузере).
 - [ ] Попытка создать файл в `/data/photos` внутри контейнера завершается ошибкой `Read-only file system`.

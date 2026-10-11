@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { PhotoController } from '../../controllers/photo.controller.js';
-import type { IPlayService, IImageProcessorService, PhotoItem, PublicPhoto } from '../../types.js';
+import type { AccessKeyService } from '../../keystore/access-key.service.js';
+import type { AccessKey, IPlayService, IImageProcessorService, PhotoItem, PublicPhoto } from '../../types.js';
 import { Readable } from 'node:stream';
 import { Writable } from 'node:stream';
 
@@ -10,9 +11,15 @@ describe('PhotoController', () => {
     getNext: ReturnType<typeof vi.fn>;
     getById: ReturnType<typeof vi.fn>;
     listFolders: ReturnType<typeof vi.fn>;
+    isPhotoInScope: ReturnType<typeof vi.fn>;
   };
   let mockImageProcessor: {
     process: ReturnType<typeof vi.fn>;
+  };
+  let mockAccessKeyService: {
+    resolve: ReturnType<typeof vi.fn>;
+    folderIdsFor: ReturnType<typeof vi.fn>;
+    isPhotoAllowed: ReturnType<typeof vi.fn>;
   };
   let mockReply: {
     send: ReturnType<typeof vi.fn>;
@@ -32,19 +39,34 @@ describe('PhotoController', () => {
   };
   let responseChunks: Buffer[];
 
+  const validKey: AccessKey = {
+    key: 'k7mq2Xab',
+    label: 'test',
+    folders: 'all',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    expiresAt: null,
+  };
+
   beforeEach(() => {
     mockPlayService = {
       getNext: vi.fn(),
       getById: vi.fn(),
       listFolders: vi.fn(),
+      isPhotoInScope: vi.fn(),
     };
     mockImageProcessor = {
       process: vi.fn(),
+    };
+    mockAccessKeyService = {
+      resolve: vi.fn().mockReturnValue(validKey),
+      folderIdsFor: vi.fn().mockReturnValue(undefined),
+      isPhotoAllowed: vi.fn().mockReturnValue(true),
     };
 
     controller = new PhotoController(
       mockPlayService as unknown as IPlayService,
       mockImageProcessor as unknown as IImageProcessorService,
+      mockAccessKeyService as unknown as AccessKeyService,
     );
     responseChunks = [];
 
@@ -78,7 +100,7 @@ describe('PhotoController', () => {
 
     mockRequest = {
       params: {},
-      query: {},
+      query: { key: 'k7mq2Xab' },
       log: { warn: vi.fn() },
     };
   });
@@ -90,12 +112,13 @@ describe('PhotoController', () => {
 
       await controller.getNext(mockRequest as never, mockReply as never);
 
+      expect(mockAccessKeyService.resolve).toHaveBeenCalledWith('k7mq2Xab');
       expect(mockPlayService.getNext).toHaveBeenCalledWith(undefined);
       expect(mockReply.send).toHaveBeenCalledWith(mockPhoto);
     });
 
-    it('should pass comma-separated folders query to the play service', async () => {
-      mockRequest.query = { folders: 'folder-a,folder-b' };
+    it('should use folder scope from the access key', async () => {
+      mockAccessKeyService.folderIdsFor.mockReturnValue(['folder-a', 'folder-b']);
       mockPlayService.getNext.mockReturnValue({
         photo: { id: 'photo-1' },
         unknownFolderIds: [],
@@ -104,6 +127,17 @@ describe('PhotoController', () => {
       await controller.getNext(mockRequest as never, mockReply as never);
 
       expect(mockPlayService.getNext).toHaveBeenCalledWith(['folder-a', 'folder-b']);
+    });
+
+    it('should return 401 when the access key is missing or invalid', async () => {
+      mockAccessKeyService.resolve.mockReturnValue(null);
+      mockRequest.query = {};
+
+      await controller.getNext(mockRequest as never, mockReply as never);
+
+      expect(mockReply.status).toHaveBeenCalledWith(401);
+      expect(mockReply.send).toHaveBeenCalledWith({ error: 'access_denied' });
+      expect(mockPlayService.getNext).not.toHaveBeenCalled();
     });
 
     it('should return 404 when no photo is available', async () => {
@@ -125,7 +159,7 @@ describe('PhotoController', () => {
 
       expect(mockRequest.log.warn).toHaveBeenCalledWith(
         { folderId: 'missing-folder' },
-        'Unknown folder id in folders filter, skipped',
+        'Unknown folder id in key scope, skipped',
       );
       expect(mockReply.send).toHaveBeenCalledWith({ id: 'photo-1' });
       expect(mockReply.status).not.toHaveBeenCalledWith(404);
@@ -167,9 +201,9 @@ describe('PhotoController', () => {
     const photoId = 'photo-123';
     const mockPhotoItem: PhotoItem = { id: photoId, path: '/path/to/photo.jpg' };
 
-    it('should set headers only after first chunk and stream image bytes', async () => {
+    it('should set private Cache-Control after first chunk and stream image bytes', async () => {
       mockRequest.params = { id: photoId };
-      mockRequest.query = { w: '1920', h: '1080' };
+      mockRequest.query = { key: 'k7mq2Xab', w: '1920', h: '1080' };
 
       mockPlayService.getById.mockReturnValue(mockPhotoItem);
       mockImageProcessor.process.mockResolvedValue(
@@ -178,19 +212,49 @@ describe('PhotoController', () => {
 
       await controller.getPhoto(mockRequest as never, mockReply as never);
 
-      expect(mockPlayService.getById).toHaveBeenCalledWith(photoId);
+      expect(mockAccessKeyService.resolve).toHaveBeenCalledWith('k7mq2Xab');
+      expect(mockAccessKeyService.isPhotoAllowed).toHaveBeenCalledWith(
+        validKey,
+        photoId,
+        mockPlayService,
+      );
       expect(mockImageProcessor.process).toHaveBeenCalledWith(mockPhotoItem, {
         width: 1920,
         height: 1080,
       });
       expect(mockReply.hijack).toHaveBeenCalled();
       expect(mockReply.raw.setHeader).toHaveBeenCalledWith('Content-Type', 'image/jpeg');
-      expect(mockReply.raw.setHeader).toHaveBeenCalledWith('Cache-Control', 'public, max-age=3600');
+      expect(mockReply.raw.setHeader).toHaveBeenCalledWith('Cache-Control', 'private, max-age=3600');
       expect(Buffer.concat(responseChunks).toString()).toBe('fake-jpeg-bytes');
       expect(mockReply.send).not.toHaveBeenCalled();
     });
 
+    it('should return 401 when the access key is invalid', async () => {
+      mockAccessKeyService.resolve.mockReturnValue(null);
+      mockRequest.params = { id: photoId };
+      mockRequest.query = { key: 'bad' };
+
+      await controller.getPhoto(mockRequest as never, mockReply as never);
+
+      expect(mockReply.status).toHaveBeenCalledWith(401);
+      expect(mockReply.send).toHaveBeenCalledWith({ error: 'access_denied' });
+      expect(mockImageProcessor.process).not.toHaveBeenCalled();
+    });
+
+    it('should return 404 when photo is outside key scope', async () => {
+      mockAccessKeyService.isPhotoAllowed.mockReturnValue(false);
+      mockRequest.params = { id: photoId };
+      mockRequest.query = { key: 'k7mq2Xab' };
+
+      await controller.getPhoto(mockRequest as never, mockReply as never);
+
+      expect(mockReply.status).toHaveBeenCalledWith(404);
+      expect(mockReply.send).toHaveBeenCalledWith({ error: 'Photo not found' });
+      expect(mockReply.raw.setHeader).not.toHaveBeenCalled();
+    });
+
     it('should return 404 when photo ID is not found', async () => {
+      mockAccessKeyService.isPhotoAllowed.mockReturnValue(false);
       mockRequest.params = { id: 'unknown' };
       mockPlayService.getById.mockReturnValue(null);
 

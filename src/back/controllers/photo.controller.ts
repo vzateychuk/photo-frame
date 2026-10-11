@@ -5,30 +5,35 @@ import {
   GetPhotoQuerySchema,
   ListFoldersQuerySchema,
 } from '../schemas/photo.schema.js';
-// import { config } from '../config/env.config.js';
- import type { IPlayService, IImageProcessorService } from '../types.js';
-import { buildFolderSlideshowUrl } from '../utils/slideshow-url.js';
+import type { IPlayService, IImageProcessorService } from '../types.js';
+import type { AccessKeyService } from '../keystore/access-key.service.js';
 import type { Readable } from 'node:stream';
 
 export class PhotoController {
   constructor(
     private readonly playService: IPlayService,
     private readonly imageProcessor: IImageProcessorService,
-    private readonly publicBaseUrl?: string,
+    private readonly accessKeyService: AccessKeyService,
   ) {}
 
   /**
    * Возвращает ID следующего случайного фото из плейлиста.
-   * Опциональный query `folders=id1,id2` ограничивает набор указанными папками (рекурсивно).
-   * Неизвестные ID папок пропускаются и пишутся в лог.
+   * Требует действующий query `key`; набор папок берётся из записи ключа.
    */
   public getNext = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
-      const { folders } = GetNextQuerySchema.parse(req.query);
-      const { photo, unknownFolderIds } = this.playService.getNext(folders);
+      const { key: rawKey } = GetNextQuerySchema.parse(req.query);
+      const accessKey = this.accessKeyService.resolve(rawKey);
+      if (!accessKey) {
+        reply.status(401).send({ error: 'access_denied' });
+        return;
+      }
+
+      const folderIds = this.accessKeyService.folderIdsFor(accessKey);
+      const { photo, unknownFolderIds } = this.playService.getNext(folderIds);
 
       for (const folderId of unknownFolderIds) {
-        req.log.warn({ folderId }, 'Unknown folder id in folders filter, skipped');
+        req.log.warn({ folderId }, 'Unknown folder id in key scope, skipped');
       }
 
       if (!photo) {
@@ -59,16 +64,7 @@ export class PhotoController {
         q === undefined
           ? this.playService.listFolders()
           : this.playService.listFolders({ query: q });
-      const publicBaseUrl = this.publicBaseUrl;
-      reply.send({
-        folders:
-          publicBaseUrl === undefined
-            ? folders
-            : folders.map((folder) => ({
-                ...folder,
-                slideshowUrl: buildFolderSlideshowUrl(publicBaseUrl, folder.id),
-              })),
-      });
+      reply.send({ folders });
     } catch (err) {
       if (isZodError(err)) {
         reply.status(400).send({ error: 'Invalid parameters', details: err.issues });
@@ -80,16 +76,27 @@ export class PhotoController {
 
   /**
    * Возвращает бинарный поток изображения, ресайз которого выполняется на лету.
+   * Требует действующий query `key`; фото вне области ключа → 404.
    * Заголовки ставятся только после первого успешно прочитанного чанка,
    * чтобы при ошибке Sharp можно было отдать JSON 500, а не image/jpeg.
    */
   public getPhoto = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
       const { id } = GetPhotoParamsSchema.parse(req.params);
-      const { w, h } = GetPhotoQuerySchema.parse(req.query);
+      const { key: rawKey, w, h } = GetPhotoQuerySchema.parse(req.query);
+
+      const accessKey = this.accessKeyService.resolve(rawKey);
+      if (!accessKey) {
+        reply.status(401).send({ error: 'access_denied' });
+        return;
+      }
+
+      if (!this.accessKeyService.isPhotoAllowed(accessKey, id, this.playService)) {
+        reply.status(404).send({ error: 'Photo not found' });
+        return;
+      }
 
       const photoItem = this.playService.getById(id);
-
       if (!photoItem) {
         reply.status(404).send({ error: 'Photo not found' });
         return;
@@ -163,7 +170,7 @@ export class PhotoController {
 
         reply.hijack();
         reply.raw.setHeader('Content-Type', 'image/jpeg');
-        reply.raw.setHeader('Cache-Control', 'public, max-age=3600');
+        reply.raw.setHeader('Cache-Control', 'private, max-age=3600');
         headersSent = true;
 
         reply.raw.write(chunk);

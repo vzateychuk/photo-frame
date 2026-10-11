@@ -24,8 +24,11 @@ export const envSchema = z.object({
 export type AppConfig = z.infer<typeof envSchema>;
 
 export const loadConfig = (): AppConfig => {
-  // Load .env if present
-  dotenv.config();
+  // Load .env if present. Tests set process.env explicitly; skip .env so
+  // intentional deletes (e.g. ADMIN_TOKEN) are not overwritten.
+  if (process.env.NODE_ENV !== 'test') {
+    dotenv.config();
+  }
   const parsed = envSchema.safeParse(process.env);
   if (!parsed.success) {
     console.error('❌ Critical init error: Invalid environment variables');

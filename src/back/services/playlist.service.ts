@@ -73,6 +73,22 @@ export class PlaylistService {
   }
 
   /**
+   * True if the photo exists and belongs to the folder scope.
+   * Without folderIds — any known photo. With folderIds — same recursive
+   * union as getNext (unknown folder ids yield an empty scope).
+   */
+  isPhotoInScope(photoId: string, folderIds?: readonly FolderId[]): boolean {
+    if (!this.getById(photoId)) {
+      return false;
+    }
+    if (!folderIds || folderIds.length === 0) {
+      return true;
+    }
+    const { photos } = this.resolveScope(folderIds);
+    return photos.some((photo) => photo.id === photoId);
+  }
+
+  /**
    * Публичный каталог папок без путей на диске.
    * С `query` — только папки, в чьём имени есть подстрока (без учёта регистра);
    * число фото считается только для отобранных папок.

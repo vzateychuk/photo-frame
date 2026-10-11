@@ -4,18 +4,21 @@ export interface CatalogFolder {
   readonly parentId: string | null;
   readonly pathLabel: string;
   readonly photoCount: number;
-  /** Готовая ссылка с сервера (из PUBLIC_BASE_URL), если задана. */
   readonly slideshowUrl?: string;
 }
 
+export interface SearchFoldersOptions {
+  readonly signal?: AbortSignal;
+  readonly adminToken: string;
+}
+
 /**
- * Запрашивает папки по подстроке имени у бэкенда.
- * Пустой запрос не ходит на сервер: полный каталог на этой странице не нужен.
+ * Запрашивает папки по подстроке имени: GET /api/catalog with Bearer token.
  */
 export async function searchFolders(
   baseUrl: string,
   query: string,
-  signal?: AbortSignal,
+  options: SearchFoldersOptions,
 ): Promise<CatalogFolder[]> {
   const trimmed = query.trim();
   if (trimmed.length === 0) {
@@ -23,12 +26,15 @@ export async function searchFolders(
   }
 
   const root = baseUrl.replace(/\/$/, '');
-  const url = new URL(`${root}/api/catalog/folders`);
+  const url = new URL(`${root}/api/catalog`);
   url.searchParams.set('q', trimmed);
 
   const response = await fetch(url, {
-    headers: { Accept: 'application/json' },
-    ...(signal ? { signal } : {}),
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${options.adminToken}`,
+    },
+    ...(options.signal ? { signal: options.signal } : {}),
   });
 
   if (!response.ok) {
@@ -77,34 +83,4 @@ function parseFolder(value: unknown): CatalogFolder {
     photoCount: record.photoCount,
     ...(slideshowUrl === undefined ? {} : { slideshowUrl }),
   };
-}
-
-/**
- * Готовая ссылка на слайд-шоу с фильтром папок.
- * Несколько id → `?folders=id1,id2` (как ждёт страница слайд-шоу).
- */
-export function buildFolderSlideshowUrl(
-  baseUrl: string,
-  folderIds: readonly string[],
-): string {
-  if (folderIds.length === 0) {
-    throw new Error('Нужен хотя бы один идентификатор папки');
-  }
-  const root = baseUrl.replace(/\/$/, '');
-  const url = new URL(`${root}/`);
-  url.searchParams.set('folders', folderIds.join(','));
-  return url.toString();
-}
-
-/** База для ссылки: из `slideshowUrl` сервера, иначе origin страницы. */
-export function resolveSlideshowBaseUrl(
-  pageOrigin: string,
-  folders: readonly CatalogFolder[],
-): string {
-  for (const folder of folders) {
-    if (folder.slideshowUrl) {
-      return new URL(folder.slideshowUrl).origin;
-    }
-  }
-  return pageOrigin.replace(/\/$/, '');
 }

@@ -2,15 +2,21 @@
 import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 import path from 'node:path';
+import crypto from 'crypto';
 
 import { getReleaseInfo } from './config/release-info.js';
-import { loadConfig } from './config/env.config';
-import type { AppConfig } from './config/env.config';
+import { loadConfig } from './config/env.config.js';
+import type { AppConfig } from './config/env.config.js';
 import { PhotoScannerService } from './services/scanner.service.js';
 import { PlaylistService } from './services/playlist.service.js';
 import { ImageProcessorService } from './services/image.service.js';
-import crypto from 'crypto';
 import { PhotoController } from './controllers/photo.controller.js';
+import { JsonKeyStore } from './keystore/json-key-store.js';
+import { AccessKeyService } from './keystore/access-key.service.js';
+import { generateKey } from './keystore/access-key.js';
+import { CreateKeyBodySchema } from './schemas/photo.schema.js';
+import { buildKeySlideshowUrl } from './utils/key-url.js';
+import type { AccessKey } from './types.js';
 
 import type { FastifyRequest, FastifyReply } from 'fastify';
 
@@ -51,10 +57,12 @@ export const buildPublicApp = async (): Promise<{
   const playlistService = new PlaylistService();
   playlistService.load(photos, folders);
   const imageProcessor = new ImageProcessorService();
+  const keyStore = JsonKeyStore.load(config.KEYSTORE_FILE);
+  const accessKeyService = new AccessKeyService(keyStore);
   const photoController = new PhotoController(
     playlistService,
     imageProcessor,
-    config.PUBLIC_BASE_URL
+    accessKeyService,
   );
 
   // Routes
@@ -68,11 +76,11 @@ export const buildPublicApp = async (): Promise<{
   });
 
   server.get('/api/play/next', photoController.getNext);
-  server.get('/api/catalog/folders', photoController.listFolders);
   server.get('/api/photos/:id', photoController.getPhoto);
 
-  // Protected catalog endpoint (requires ADMIN_TOKEN)
+  // Protected catalog and keys endpoints (requires ADMIN_TOKEN)
   if (config.ADMIN_TOKEN) {
+    const adminToken = config.ADMIN_TOKEN;
     const authPreHandler = async (req: FastifyRequest, reply: FastifyReply) => {
       const authHeader = req.headers.authorization;
       if (!authHeader || typeof authHeader !== 'string') {
@@ -85,7 +93,7 @@ export const buildPublicApp = async (): Promise<{
         return;
       }
       const tokenBuf = Buffer.from(token);
-      const expectedBuf = Buffer.from(config.ADMIN_TOKEN);
+      const expectedBuf = Buffer.from(adminToken);
       // Length check first to avoid timingSafeEqual throwing on length mismatch
       if (tokenBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(tokenBuf, expectedBuf)) {
         reply.code(401).send();
@@ -93,7 +101,72 @@ export const buildPublicApp = async (): Promise<{
       }
       // OK, proceed to handler
     };
+
     server.get('/api/catalog', { preHandler: authPreHandler }, photoController.listFolders);
+
+    const withUrl = (record: AccessKey) => {
+      const base = config.PUBLIC_BASE_URL;
+      return {
+        ...record,
+        url: base === undefined ? undefined : buildKeySlideshowUrl(base, record.key),
+      };
+    };
+
+    server.get('/api/keys', { preHandler: authPreHandler }, async (_req, reply) => {
+      reply.send({ keys: keyStore.list().map(withUrl) });
+    });
+
+    server.post('/api/keys', { preHandler: authPreHandler }, async (req, reply) => {
+      const parsed = CreateKeyBodySchema.safeParse(req.body);
+      if (!parsed.success) {
+        reply.status(400).send({ error: 'Invalid parameters', details: parsed.error.issues });
+        return;
+      }
+
+      const { label, folders, ttlHours } = parsed.data;
+
+      if (Array.isArray(folders)) {
+        const knownIds = new Set(playlistService.listFolders().map((folder) => folder.id));
+        const unknown = folders.filter((id) => !knownIds.has(id));
+        if (unknown.length > 0) {
+          reply.status(400).send({
+            error: 'Unknown folder ids',
+            details: { unknownFolderIds: unknown },
+          });
+          return;
+        }
+      }
+
+      const key = generateKey((candidate) => keyStore.get(candidate) !== null);
+      const createdAt = new Date().toISOString();
+      const expiresAt =
+        ttlHours === undefined
+          ? null
+          : new Date(Date.now() + ttlHours * 60 * 60 * 1000).toISOString();
+
+      const record: AccessKey = {
+        key,
+        label,
+        folders,
+        createdAt,
+        expiresAt,
+      };
+      keyStore.add(record);
+      reply.status(201).send(withUrl(record));
+    });
+
+    server.delete<{ Params: { key: string } }>(
+      '/api/keys/:key',
+      { preHandler: authPreHandler },
+      async (req, reply) => {
+        const removed = keyStore.remove(req.params.key);
+        if (!removed) {
+          reply.status(404).send({ error: 'Key not found' });
+          return;
+        }
+        reply.status(204).send();
+      },
+    );
   }
 
   // Static files in production
@@ -105,6 +178,8 @@ export const buildPublicApp = async (): Promise<{
       prefix: '/',
       decorateReply: false,
     });
+    // /catalog → /catalog/ (index.html from Vite multi-page build)
+    server.get('/catalog', async (_req, reply) => reply.redirect('/catalog/'));
   }
 
   return { server, config };

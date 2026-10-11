@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SlideshowEngine } from '../../core/engine.js';
 import { ApiClient } from '../../api/client.js';
 import { LayerManager } from '../../ui/layer-manager.js';
+import { AccessDeniedError } from '../../api/access-denied-error.js';
 
 type Mock = ReturnType<typeof vi.fn>;
 
@@ -15,7 +16,13 @@ const deferred = () => {
 
 describe('SlideshowEngine', () => {
   let mockApiClient: { fetchNextPhotoId: Mock; buildImageUrl: Mock; getIntervalMs: Mock };
-  let mockLayerManager: { preloadImage: Mock; swapLayers: Mock; showMessage: Mock; hideMessage: Mock };
+  let mockLayerManager: {
+    preloadImage: Mock;
+    swapLayers: Mock;
+    showMessage: Mock;
+    hideMessage: Mock;
+    clearImages: Mock;
+  };
   const engines: SlideshowEngine[] = [];
 
   const createEngine = (intervalMs = 60_000) => {
@@ -34,6 +41,7 @@ describe('SlideshowEngine', () => {
       swapLayers: vi.fn(),
       showMessage: vi.fn(),
       hideMessage: vi.fn(),
+      clearImages: vi.fn(),
     };
     mockApiClient = {
       fetchNextPhotoId: vi.fn().mockResolvedValue('photo-123'),
@@ -237,6 +245,28 @@ describe('SlideshowEngine', () => {
       } finally {
         SlideshowEngine.BACKOFF_BASE_MS = originalDelay;
       }
+    });
+
+    it('stops without retry on AccessDeniedError and notifies callback', async () => {
+      const onAccessDenied = vi.fn();
+      mockApiClient.fetchNextPhotoId.mockRejectedValue(new AccessDeniedError());
+      const engine = new SlideshowEngine(
+        mockApiClient as unknown as ApiClient,
+        mockLayerManager as unknown as LayerManager,
+        60_000,
+        { onAccessDenied },
+      );
+      engines.push(engine);
+
+      await engine.start();
+
+      expect(mockLayerManager.clearImages).toHaveBeenCalled();
+      expect(mockLayerManager.showMessage).toHaveBeenCalledWith(
+        'Код недействителен. Попросите новый у владельца',
+      );
+      expect(onAccessDenied).toHaveBeenCalledTimes(1);
+      expect(engine.isRunning()).toBe(false);
+      expect(mockApiClient.fetchNextPhotoId).toHaveBeenCalledTimes(1);
     });
   });
 });
