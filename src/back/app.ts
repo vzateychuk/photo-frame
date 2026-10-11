@@ -9,7 +9,10 @@ import type { AppConfig } from './config/env.config';
 import { PhotoScannerService } from './services/scanner.service.js';
 import { PlaylistService } from './services/playlist.service.js';
 import { ImageProcessorService } from './services/image.service.js';
+import crypto from 'crypto';
 import { PhotoController } from './controllers/photo.controller.js';
+
+import type { FastifyRequest, FastifyReply } from 'fastify';
 
 export const buildPublicApp = async (): Promise<{
   server: import('fastify').FastifyInstance;
@@ -67,6 +70,31 @@ export const buildPublicApp = async (): Promise<{
   server.get('/api/play/next', photoController.getNext);
   server.get('/api/catalog/folders', photoController.listFolders);
   server.get('/api/photos/:id', photoController.getPhoto);
+
+  // Protected catalog endpoint (requires ADMIN_TOKEN)
+  if (config.ADMIN_TOKEN) {
+    const authPreHandler = async (req: FastifyRequest, reply: FastifyReply) => {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || typeof authHeader !== 'string') {
+        reply.code(401).send();
+        return;
+      }
+      const [type, token] = authHeader.split(' ');
+      if (type !== 'Bearer' || !token) {
+        reply.code(401).send();
+        return;
+      }
+      const tokenBuf = Buffer.from(token);
+      const expectedBuf = Buffer.from(config.ADMIN_TOKEN);
+      // Length check first to avoid timingSafeEqual throwing on length mismatch
+      if (tokenBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(tokenBuf, expectedBuf)) {
+        reply.code(401).send();
+        return;
+      }
+      // OK, proceed to handler
+    };
+    server.get('/api/catalog', { preHandler: authPreHandler }, photoController.listFolders);
+  }
 
   // Static files in production
   if (config.NODE_ENV === 'production') {
