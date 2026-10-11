@@ -5,8 +5,8 @@ import {
   GetPhotoQuerySchema,
   ListFoldersQuerySchema,
 } from '../schemas/photo.schema.js';
-import { config } from '../config/env.config.js';
-import type { IPlayService, IImageProcessorService } from '../types.js';
+// import { config } from '../config/env.config.js';
+ import type { IPlayService, IImageProcessorService } from '../types.js';
 import { buildFolderSlideshowUrl } from '../utils/slideshow-url.js';
 import type { Readable } from 'node:stream';
 
@@ -14,6 +14,7 @@ export class PhotoController {
   constructor(
     private readonly playService: IPlayService,
     private readonly imageProcessor: IImageProcessorService,
+    private readonly publicBaseUrl?: string,
   ) {}
 
   /**
@@ -58,7 +59,7 @@ export class PhotoController {
         q === undefined
           ? this.playService.listFolders()
           : this.playService.listFolders({ query: q });
-      const publicBaseUrl = config.PUBLIC_BASE_URL;
+      const publicBaseUrl = this.publicBaseUrl;
       reply.send({
         folders:
           publicBaseUrl === undefined
