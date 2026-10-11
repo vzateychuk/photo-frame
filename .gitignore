@@ -2,6 +2,8 @@ data/
 dist/
 node_modules/
 photo-frame-raspi.tar
+opencode.json
+
 
 .env
 .cursor/
