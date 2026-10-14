@@ -214,28 +214,26 @@ describe('SlideshowEngine', () => {
       expect(mockLayerManager.showMessage).not.toHaveBeenCalled();
     });
 
-    it('shows message and pauses after consecutive failures, then continues', async () => {
+    it('after consecutive failures pauses silently then continues without on-screen error', async () => {
       const originalDelay = SlideshowEngine.BACKOFF_BASE_MS;
       SlideshowEngine.BACKOFF_BASE_MS = 40;
 
       try {
         const engine = createEngine();
-        mockLayerManager.preloadImage.mockRejectedValue(new Error('Failed to load image: x'));
-
-        let fetchesBeforeMessage = 0;
-        mockLayerManager.showMessage.mockImplementation(() => {
-          fetchesBeforeMessage = mockApiClient.fetchNextPhotoId.mock.calls.length;
-          mockLayerManager.preloadImage.mockResolvedValue(undefined);
+        let attempts = 0;
+        mockLayerManager.preloadImage.mockImplementation(() => {
+          attempts += 1;
+          if (attempts <= SlideshowEngine.MAX_CONSECUTIVE_FAILURES) {
+            return Promise.reject(new Error('Failed to load image: x'));
+          }
+          return Promise.resolve();
         });
 
         const runPromise = engine.start();
         await vi.waitFor(() => expect(mockLayerManager.swapLayers).toHaveBeenCalledTimes(1));
 
-        expect(mockLayerManager.showMessage).toHaveBeenCalledTimes(1);
-        expect(mockLayerManager.showMessage).toHaveBeenCalledWith(
-          expect.stringContaining('Повтор через'),
-        );
-        expect(fetchesBeforeMessage).toBe(SlideshowEngine.MAX_CONSECUTIVE_FAILURES);
+        expect(mockLayerManager.showMessage).not.toHaveBeenCalled();
+        expect(attempts).toBe(SlideshowEngine.MAX_CONSECUTIVE_FAILURES + 1);
         expect(mockApiClient.fetchNextPhotoId).toHaveBeenCalledTimes(
           SlideshowEngine.MAX_CONSECUTIVE_FAILURES + 1,
         );

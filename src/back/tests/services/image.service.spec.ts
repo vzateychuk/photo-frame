@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { ImageProcessorService } from '../../services/image.service.js';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { ImageProcessorService, MissingPhotoFileError } from '../../services/image.service.js';
 import type { PhotoItem } from '../../types.js';
 import { Readable } from 'node:stream';
 import path from 'node:path';
@@ -50,11 +50,22 @@ describe('ImageProcessorService', () => {
     expect(meta.height).toBeLessThanOrEqual(64);
   });
 
-  it('should reject when file does not exist', async () => {
+  it('should reject with MissingPhotoFileError before opening Sharp', async () => {
     const photo: PhotoItem = { id: '2', path: '/non/existent/path.jpg' };
-    const stream = await service.process(photo, { width: 100, height: 100 });
+    await expect(service.process(photo, { width: 100, height: 100 })).rejects.toBeInstanceOf(
+      MissingPhotoFileError,
+    );
+  });
 
-    await expect(consumeStream(stream)).rejects.toThrow();
+  it('should call onError when file is missing', async () => {
+    const onError = vi.fn();
+    service = new ImageProcessorService({ onError });
+    const photo: PhotoItem = { id: 'missing-id', path: '/non/existent/path.jpg' };
+
+    await expect(service.process(photo, { width: 100, height: 100 })).rejects.toBeInstanceOf(
+      MissingPhotoFileError,
+    );
+    expect(onError).toHaveBeenCalledWith('missing-id', expect.any(Error));
   });
 
   it('should reject for corrupted image files', async () => {

@@ -45,8 +45,9 @@ export const buildPublicApp = async (): Promise<{
 
   // Scan photos directory
   const photosDir = path.resolve(config.PHOTOS_DIR);
-  const scanner = new PhotoScannerService(photosDir);
+  const scanner = new PhotoScannerService(photosDir, server.log);
   const { photos, folders } = await scanner.scan();
+
 
   if (photos.length === 0) {
     server.log.warn(`В директории ${photosDir} не найдено фото (JPEG/PNG/GIF/WebP)`);
@@ -56,7 +57,13 @@ export const buildPublicApp = async (): Promise<{
 
   const playlistService = new PlaylistService();
   playlistService.load(photos, folders);
-  const imageProcessor = new ImageProcessorService();
+
+  const imageProcessor = new ImageProcessorService({
+    onError: (photoId) => {
+      playlistService.removePhoto(photoId);
+    },
+  });
+
   const keyStore = JsonKeyStore.load(config.KEYSTORE_FILE);
   const accessKeyService = new AccessKeyService(keyStore);
   const photoController = new PhotoController(
@@ -64,6 +71,10 @@ export const buildPublicApp = async (): Promise<{
     imageProcessor,
     accessKeyService,
   );
+
+  // Фоновая сверка с диском: новые фото, удалённые id, папки (сейчас раз в 1 мин)
+  scanner.startAutoScan(playlistService, 1 * 60 * 1000);
+
 
   // Routes
   server.get('/health', async () => {

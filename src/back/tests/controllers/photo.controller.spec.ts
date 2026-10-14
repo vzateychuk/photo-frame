@@ -294,5 +294,18 @@ describe('PhotoController', () => {
       expect(mockReply.send).toHaveBeenCalledWith({ error: 'Image processing failed' });
       expect(mockReply.raw.setHeader).not.toHaveBeenCalled();
     });
+
+    it('should return 404 when process() rejects with MissingPhotoFileError', async () => {
+      const { MissingPhotoFileError } = await import('../../services/image.service.js');
+      mockRequest.params = { id: photoId };
+      mockPlayService.getById.mockReturnValue(mockPhotoItem);
+      mockImageProcessor.process.mockRejectedValue(new MissingPhotoFileError(photoId));
+
+      await controller.getPhoto(mockRequest as never, mockReply as never);
+
+      expect(mockReply.status).toHaveBeenCalledWith(404);
+      expect(mockReply.send).toHaveBeenCalledWith({ error: 'Photo not found' });
+      expect(mockReply.raw.setHeader).not.toHaveBeenCalled();
+    });
   });
 });

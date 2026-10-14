@@ -7,6 +7,7 @@ import {
 } from '../schemas/photo.schema.js';
 import type { IPlayService, IImageProcessorService } from '../types.js';
 import type { AccessKeyService } from '../keystore/access-key.service.js';
+import { MissingPhotoFileError } from '../services/image.service.js';
 import type { Readable } from 'node:stream';
 
 export class PhotoController {
@@ -116,6 +117,12 @@ export class PhotoController {
 
       if (isZodError(err)) {
         reply.status(400).send({ error: 'Invalid parameters', details: err.issues });
+        return;
+      }
+
+      // Нет файла на диске — не ошибка обработки, просто «фото не найдено»
+      if (err instanceof MissingPhotoFileError) {
+        reply.status(404).send({ error: 'Photo not found' });
         return;
       }
 

@@ -15,7 +15,10 @@ export class SlideshowEngine {
   private currentRun: Run | null = null;
   private lastProgressAt = 0;
 
-  /** После стольких ошибок подряд — сообщение и пауза перед следующей попыткой. */
+  /**
+   * Сколько кадров подряд можно тихо пропустить, сразу беря следующий.
+   * Дальше — пауза (без текста на экране), чтобы не долбить сервер при полном сбое.
+   */
   static MAX_CONSECUTIVE_FAILURES = 3;
   /** Срок на весь кадр: запрос id, загрузка и декодирование картинки. */
   static FRAME_TIMEOUT_MS = 30_000;
@@ -122,9 +125,11 @@ export class SlideshowEngine {
   }
 
   /**
-   * Первые ошибки подряд — сразу следующий кадр, без сообщения.
-   * Начиная с MAX_CONSECUTIVE_FAILURES — сообщение и пауза перед каждой попыткой:
-   * BACKOFF_BASE_MS, затем вдвое больше, до BACKOFF_MAX_MS. Успешный кадр сбрасывает счётчик.
+   * Не удалось показать кадр — сразу следующий, без сообщения на экране
+   * (как на бэкенде: битый/пропавший файл не должен мешать слайд-шоу).
+   * После MAX_CONSECUTIVE_FAILURES подряд — тихая пауза (backoff), без текста:
+   * BACKOFF_BASE_MS, затем вдвое больше, до BACKOFF_MAX_MS.
+   * Успешный кадр сбрасывает счётчик. AccessDenied — единственный случай с текстом.
    */
   private async runLoop(signal: AbortSignal): Promise<void> {
     let consecutiveFailures = 0;
@@ -154,10 +159,6 @@ export class SlideshowEngine {
           SlideshowEngine.BACKOFF_BASE_MS *
             2 ** (consecutiveFailures - SlideshowEngine.MAX_CONSECUTIVE_FAILURES),
           SlideshowEngine.BACKOFF_MAX_MS,
-        );
-        const message = error instanceof Error ? error.message : String(error);
-        this.layerManager.showMessage(
-          `Ошибка: ${message}\nПовтор через ${formatDelay(backoffMs)}...`,
         );
         await this.sleep(backoffMs, signal, { wakeOnRecovery: true });
       }
@@ -203,7 +204,3 @@ export class SlideshowEngine {
   }
 }
 
-function formatDelay(ms: number): string {
-  const seconds = Math.round(ms / 1000);
-  return seconds < 60 ? `${seconds} сек` : `${Math.round(seconds / 60)} мин`;
-}

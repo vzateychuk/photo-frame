@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { PhotoScannerService, photoIdFromPath } from '../../services/scanner.service.js';
+import { PlaylistService } from '../../services/playlist.service.js';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -120,6 +121,44 @@ describe('PhotoScannerService', () => {
     expect(photos).toEqual([]);
     expect(folders).toHaveLength(1);
     expect(folders[0]!.name).toBe('folder');
+  });
+
+  it('syncWithPlaylist adds new photos and removes ids missing on disk', async () => {
+    await fs.writeFile(path.join(rootDir, 'keep.jpg'), '');
+    await fs.writeFile(path.join(rootDir, 'gone.jpg'), '');
+
+    const playlist = new PlaylistService();
+    const initial = await service.scan();
+    playlist.load(initial.photos, initial.folders);
+
+    const goneId = photoIdFromPath(path.join(rootDir, 'gone.jpg'));
+    const keepId = photoIdFromPath(path.join(rootDir, 'keep.jpg'));
+    expect(playlist.getById(goneId)).not.toBeNull();
+
+    await fs.unlink(path.join(rootDir, 'gone.jpg'));
+    await fs.writeFile(path.join(rootDir, 'new.jpg'), '');
+
+    await service.syncWithPlaylist(playlist);
+
+    expect(playlist.getById(goneId)).toBeNull();
+    expect(playlist.getById(keepId)).not.toBeNull();
+    expect(playlist.getById(photoIdFromPath(path.join(rootDir, 'new.jpg')))).not.toBeNull();
+  });
+
+  it('syncWithPlaylist refreshes folder index when a folder appears', async () => {
+    await fs.writeFile(path.join(rootDir, 'root.jpg'), '');
+    const playlist = new PlaylistService();
+    const initial = await service.scan();
+    playlist.load(initial.photos, initial.folders);
+    expect(playlist.listFolders()).toHaveLength(0);
+
+    await fs.mkdir(path.join(rootDir, 'vacation'));
+    await fs.writeFile(path.join(rootDir, 'vacation', 'a.jpg'), '');
+
+    await service.syncWithPlaylist(playlist);
+
+    const folders = playlist.listFolders();
+    expect(folders.some((f) => f.name === 'vacation')).toBe(true);
   });
 });
 

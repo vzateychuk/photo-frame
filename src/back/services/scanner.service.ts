@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import type { PlaylistService } from './playlist.service.js';
 
 export interface PhotoItem {
   id: string;
@@ -20,8 +21,16 @@ export interface ScanResult {
   folders: FolderItem[];
 }
 
+/** Минимальный логгер: достаточно метода info со строкой. */
+export type ScanLogger = {
+  info: (msg: string) => void;
+};
+
 export class PhotoScannerService {
-  constructor(private readonly rootDir: string) {}
+  constructor(
+    private readonly rootDir: string,
+    private readonly logger?: ScanLogger,
+  ) {}
 
   async scan(): Promise<ScanResult> {
     const rootDir = path.resolve(this.rootDir);
@@ -63,6 +72,53 @@ export class PhotoScannerService {
     }
 
     return { photos, folders };
+  }
+
+  /**
+   * Приводит плейлист к диску: добавляет новые фото, убирает отсутствующие,
+   * обновляет индекс папок.
+   */
+  async syncWithPlaylist(playlistService: PlaylistService): Promise<void> {
+    this.logger?.info('Syncing photos with disk...');
+    const { photos: diskPhotos, folders: diskFolders } = await this.scan();
+    const diskIds = new Set(diskPhotos.map((photo) => photo.id));
+
+    const removed = playlistService.removePhotosNotIn(diskIds);
+    let added = 0;
+    for (const photo of diskPhotos) {
+      if (!playlistService.getById(photo.id)) {
+        playlistService.addPhoto(photo);
+        added += 1;
+      }
+    }
+    // removePhotosNotIn уже сбросил курсоры при удалениях; при только добавлениях — здесь
+    if (added > 0 && removed === 0) {
+      playlistService.clearScopes();
+    }
+    const foldersChanged = playlistService.replaceFolders(diskFolders);
+
+    if (added > 0 || removed > 0 || foldersChanged) {
+      this.logger?.info(
+        `Sync done: +${added} photo(s), -${removed} photo(s), folders=${diskFolders.length}`,
+      );
+    }
+  }
+
+  /**
+   * Запускает периодическое сканирование директории для обновления плейлиста.
+   * Использует рекурсивный setTimeout, чтобы избежать наложения циклов.
+   */
+  startAutoScan(playlistService: PlaylistService, intervalMs: number = 600_000): void {
+    const run = async () => {
+      try {
+        await this.syncWithPlaylist(playlistService);
+      } catch (err) {
+        console.error('[AutoScan Error]', err);
+      } finally {
+        setTimeout(run, intervalMs);
+      }
+    };
+    setTimeout(run, intervalMs);
   }
 }
 
