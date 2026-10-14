@@ -19,6 +19,11 @@ export const envSchema = z.object({
   KEYSTORE_FILE: z.string().default('/data/state/keystore.json'),
   /** Secret token for admin endpoints. Optional, min 32 chars. */
   ADMIN_TOKEN: z.string().min(32).optional(),
+  /**
+   * Interval between background photo-dir syncs (milliseconds).
+   * Default 10 minutes. Min 10 seconds to avoid hammering the disk.
+   */
+  PHOTO_SCAN_INTERVAL_MS: z.coerce.number().int().min(10_000).default(600_000),
 });
 
 export type AppConfig = z.infer<typeof envSchema>;

@@ -72,8 +72,11 @@ export const buildPublicApp = async (): Promise<{
     accessKeyService,
   );
 
-  // Фоновая сверка с диском: новые фото, удалённые id, папки (сейчас раз в 1 мин)
-  scanner.startAutoScan(playlistService, 1 * 60 * 1000);
+  // Фоновая сверка с диском: новые фото, удалённые id, папки
+  server.log.info(
+    `Автоскан фото: каждые ${config.PHOTO_SCAN_INTERVAL_MS} мс (${Math.round(config.PHOTO_SCAN_INTERVAL_MS / 60_000)} мин)`,
+  );
+  scanner.startAutoScan(playlistService, config.PHOTO_SCAN_INTERVAL_MS);
 
 
   // Routes

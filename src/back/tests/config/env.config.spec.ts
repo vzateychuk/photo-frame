@@ -113,6 +113,33 @@ describe('envSchema', () => {
     const result = envSchema.safeParse({});
     expect(result.success).toBe(false);
   });
+
+  it('defaults PHOTO_SCAN_INTERVAL_MS to 10 minutes', () => {
+    const result = envSchema.safeParse(baseEnv);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.PHOTO_SCAN_INTERVAL_MS).toBe(600_000);
+    }
+  });
+
+  it('accepts a custom PHOTO_SCAN_INTERVAL_MS', () => {
+    const result = envSchema.safeParse({
+      ...baseEnv,
+      PHOTO_SCAN_INTERVAL_MS: '60000',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.PHOTO_SCAN_INTERVAL_MS).toBe(60_000);
+    }
+  });
+
+  it('rejects PHOTO_SCAN_INTERVAL_MS below 10 seconds', () => {
+    const result = envSchema.safeParse({
+      ...baseEnv,
+      PHOTO_SCAN_INTERVAL_MS: '9999',
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe('loadConfig', () => {

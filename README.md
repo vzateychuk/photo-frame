@@ -84,6 +84,7 @@ curl -s -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/js
 | `PORT` | Порт сервера | Нет | `3000` |
 | `HOST` | Бинд адрес внутри контейнера | Нет | `0.0.0.0` |
 | `PHOTOS_DIR` | Путь к папке с фото | **Да** | — |
+| `PHOTO_SCAN_INTERVAL_MS` | Интервал фоновой сверки папки с фото (мс), мин. 10000 | Нет | `600000` (10 мин) |
 | `LOG_LEVEL` | Уровень логов pino | Нет | `info` |
 | `PUBLIC_BASE_URL` | База для готовых ссылок с `?key=` | Нет | — |
 | `KEYSTORE_FILE` | JSON-хранилище ключей | Нет | `/data/state/keystore.json` |
