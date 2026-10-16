@@ -3,7 +3,7 @@ dist/
 node_modules/
 photo-frame-raspi.tar
 opencode.json
-
+app.log
 
 .env
 .cursor/
